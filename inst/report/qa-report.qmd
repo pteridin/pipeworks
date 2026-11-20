@@ -49,8 +49,7 @@ format:
   },
   footer: context [
     #set text(size: 8pt, fill: muted)
-    #d.project
-    #if d.commit != none [ · commit #d.commit]
+    #d.project · #d.version
     #h(1fr)
     Page #counter(page).display() of #counter(page).final().first()
   ],
@@ -68,7 +67,7 @@ format:
 #table(
   columns: (auto, 1fr), stroke: none, inset: (x: 0pt, y: 4pt), column-gutter: 14pt,
   text(fill: muted)[Code version],
-  [#if d.ref != none [#d.ref] else [not under version control]#if d.commit != none [ · commit #raw(d.commit)]],
+  d.version,
   text(fill: muted)[Analyst(s)], names(d.analysts),
   text(fill: muted)[Reviewer(s)], names(d.reviewers),
   text(fill: muted)[Created], d.date,
@@ -88,7 +87,14 @@ format:
   Every function and target definition in this code version was reviewed by a second analyst who did not write it. Each verdict refers to the exact code identified by its hash; code that changed after a review was reviewed again.
 ] else [
   #block(stroke: 1pt + red, inset: 10pt, radius: 3pt)[
-    *This report does not confirm the review.* #d.counts.wrong_open item(s) are wrong or still open, so the QA check does not pass for this code version. The list of open items follows below.
+    *This report does not confirm the review.*
+    #if d.draft_reason == "uncommitted" [
+      The working copy has uncommitted changes in code or review entries, so the reviewed code cannot be tied to a commit. Commit them and render the report again.
+    ] else if d.draft_reason == "empty" [
+      No reviewable items were found, so there is nothing to confirm.
+    ] else [
+      #d.counts.wrong_open item(s) are wrong or still open, so the QA check does not pass for this code version. The list of open items follows below.
+    ]
   ]
 ]
 
@@ -164,7 +170,9 @@ format:
 // ---- Signatures ----
 #v(1cm)
 #block(breakable: false)[
-  #if d.signatures [
+  #if not d.passed [
+    #text(fill: muted)[Draft – not for signature.]
+  ] else if d.signatures [
     = Signatures
     #v(1.2cm)
     #grid(

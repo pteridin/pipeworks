@@ -103,3 +103,62 @@ test_that("missing Quarto is reported clearly", {
   withr::local_envvar(PATH = "")
   expect_error(qa_report(local_project(list("R/a.R" = "f <- 1")), output = tempfile(fileext = ".pdf")), "Quarto is needed")
 })
+
+test_that("version label: branch, detached HEAD, dirty working copy", {
+  repo <- reviewed_repo()
+  expect_match(report_data(repo)$version, "^main · commit [0-9a-f]{7}$")
+  expect_false(report_data(repo)$dirty)
+  git_run(repo, c("checkout", "-q", "--detach"))
+  d <- report_data(repo)
+  expect_match(d$version, "^detached HEAD · commit [0-9a-f]{7}$")
+  expect_true(d$passed)
+  expect_match(report_data(local_project(list("R/a.R" = "f <- 1")))$version, "not under version control")
+})
+
+test_that("a dirty working copy is a draft and final refuses it", {
+  repo <- reviewed_repo()
+  # uncommitted edit (a comment: hashes stay valid); output files do not count
+  writeLines("x", file.path(repo, "qa-report.pdf"))
+  expect_false(report_data(repo)$dirty)
+  cat("# a comment changes no hash\n", file = file.path(repo, "R/a.R"), append = TRUE)
+  d <- report_data(repo)
+  expect_true(d$dirty)
+  expect_false(d$passed)
+  expect_equal(d$draft_reason, "uncommitted")
+  expect_match(d$version, "^Working copy with uncommitted changes \\(based on commit [0-9a-f]{7}\\)$")
+  skip_if(Sys.which("quarto") == "")
+  expect_error(qa_report(repo, output = file.path(tempdir(), "dirty.pdf"), final = TRUE), "Commit your changes")
+  skip_if(Sys.which("pdftotext") == "")
+  pdf <- qa_report(repo, output = file.path(tempdir(), "dirty.pdf"), signatures = TRUE)
+  txt <- gsub("\\s+", " ", paste(system2("pdftotext", c("-layout", shQuote(pdf), "-"), stdout = TRUE), collapse = " "))
+  expect_match(txt, "Working copy with uncommitted changes (based on commit", fixed = TRUE)
+  expect_match(txt, "DRAFT – QA incomplete", fixed = TRUE)
+  expect_match(txt, "Draft – not for signature", fixed = TRUE)
+  expect_false(grepl("Signatures", txt, fixed = TRUE))
+  expect_false(grepl("valid without signature", txt, fixed = TRUE))
+})
+
+test_that("zero items is a draft, stale entries show only the status", {
+  repo <- local_git_repo(list("README.md" = "x"))
+  d <- report_data(repo)
+  expect_false(d$passed)
+  expect_equal(d$draft_reason, "empty")
+  skip_if(Sys.which("quarto") == "")
+  expect_error(qa_report(repo, output = file.path(tempdir(), "e.pdf"), final = TRUE), "no reviewable items")
+
+  repo <- reviewed_repo()
+  commit_as(repo, "R/b.R", c("#' Double the input", "h <- function(x) g(x) * 3"))
+  items <- unlist(lapply(report_data(repo)$blocks, `[[`, "items"), recursive = FALSE)
+  h <- Filter(function(i) i$id == "function:h", items)[[1]]
+  expect_equal(h$verdict, "changed")
+  expect_null(h$reviewer)
+  expect_null(h$date)
+  expect_null(h$comment)
+})
+
+test_that("an unwritable output is an error", {
+  skip_if(Sys.which("quarto") == "")
+  blocker <- withr::local_tempfile()
+  writeLines("x", blocker)
+  expect_error(qa_report(reviewed_repo(), output = file.path(blocker, "r.pdf")), "Could not write")
+})

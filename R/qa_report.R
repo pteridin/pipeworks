@@ -37,6 +37,13 @@ qa_report <- function(path = ".", ref = NULL, output = "qa-report.pdf", signatur
   }
   if (isTRUE(final)) suppressMessages(qa_check(root))
   data <- report_data(root, ref = ref, signatures = signatures, title = title, project = project)
+  if (isTRUE(final) && isTRUE(data$dirty)) {
+    stop("Commit your changes first: the working copy has uncommitted changes in code or review entries, ",
+         "so a final report cannot name a code version.", call. = FALSE)
+  }
+  if (isTRUE(final) && data$counts$items == 0) {
+    stop("The project has no reviewable items; a final report cannot confirm a review of nothing.", call. = FALSE)
+  }
 
   work <- withr::local_tempdir()
   template <- system.file("report", "qa-report.qmd", package = "pipeworks")
@@ -53,7 +60,9 @@ qa_report <- function(path = ".", ref = NULL, output = "qa-report.pdf", signatur
     stop("Quarto could not render the QA report:\n", paste(utils::tail(log, 20), collapse = "\n"), call. = FALSE)
   }
   dir.create(dirname(output), recursive = TRUE, showWarnings = FALSE)
-  file.copy(pdf, output, overwrite = TRUE)
+  if (!isTRUE(suppressWarnings(file.copy(pdf, output, overwrite = TRUE)))) {
+    stop("Could not write the QA report to `", output, "`.", call. = FALSE)
+  }
   invisible(output)
 }
 
@@ -81,7 +90,11 @@ remove_worktree <- function(path, dir) {
 report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL,
                         project = basename(normalizePath(path, mustWork = TRUE))) {
   st <- qa_status(path)
-  passed <- tryCatch({ suppressMessages(qa_check(path)); TRUE }, error = function(e) FALSE)
+  check_ok <- tryCatch({ suppressMessages(qa_check(path)); TRUE }, error = function(e) FALSE)
+  dirty <- is.null(ref) && has_uncommitted(path, st)
+  empty <- nrow(st) == 0
+  passed <- check_ok && !dirty && !empty
+  reason <- if (passed) "none" else if (dirty) "uncommitted" else if (empty) "empty" else "open"
 
   verdict <- as.character(st$status)
   verdict[st$self_reviewed] <- "self_reviewed"
@@ -96,6 +109,11 @@ report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL
   branch <- git_try(path, c("rev-parse", "--abbrev-ref", "HEAD"))
   ref_label <- if (!is.null(ref)) ref else if (length(branch) && branch[1] != "HEAD") branch[1] else NA_character_
 
+  version <- if (is.na(commit)) "not under version control"
+    else if (dirty) paste0("Working copy with uncommitted changes (based on commit ", substr(commit, 1, 7), ")")
+    else paste0(if (!is.na(ref_label)) ref_label else "detached HEAD", " \u00b7 commit ", substr(commit, 1, 7))
+  if (is.na(commit) && dirty) version <- "Working copy with uncommitted changes"
+
   na_to_null <- function(x) if (length(x) && !is.na(x)) x else NULL
   distinct <- function(x) as.list(sort(unique(x[!is.na(x)])))
   items_of <- function(rows) lapply(seq_len(nrow(rows)), function(i) list(
@@ -106,6 +124,10 @@ report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL
     comment = na_to_null(rows$comment[i])
   ))
   st$verdict <- verdict
+  stale <- verdict %in% c("changed", "unreviewed")
+  st$reviewer[stale] <- NA_character_
+  st$date[stale] <- NA_character_
+  st$comment[stale] <- NA_character_
   blocks <- lapply(unique(st$block), function(b) list(block = b, items = items_of(st[st$block == b, , drop = FALSE])))
   edges <- block_edges(path, st)
 
@@ -114,6 +136,9 @@ report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL
     title = if (is.null(title)) "QA report" else title,
     organisation = na_to_null(getOption("pipeworks.organisation", NA_character_)),
     ref = na_to_null(ref_label),
+    version = version,
+    dirty = dirty,
+    draft_reason = reason,
     commit = if (is.na(commit)) NULL else substr(commit, 1, 7),
     date = format(Sys.Date()),
     analysts = distinct(st$last_author),
@@ -129,6 +154,17 @@ report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL
     )),
     history = review_history(path)
   )
+}
+
+# TRUE if code, review entries or factory sources under `path` differ from HEAD
+# (modified, staged or untracked). Output files elsewhere in the project do not count.
+has_uncommitted <- function(path, st) {
+  if (is.na(git_head(path))) return(FALSE)
+  specs <- c("R", "_targets.R", "qa", st$file[st$kind == "file"])
+  specs <- unique(specs[file.exists(file.path(path, specs))])
+  if (!length(specs)) return(FALSE)
+  out <- git_try(path, c("status", "--porcelain", "--untracked-files=all", "--", specs))
+  length(out) > 0
 }
 
 # Block-level dependencies `from -> to` (the block that is used, the block that
