@@ -40,3 +40,45 @@ local_project <- function(files, env = parent.frame()) {
   }
   dir
 }
+
+git_cmd <- function(repo, ...) {
+  out <- suppressWarnings(system2("git", c("-C", shQuote(repo), ...), stdout = TRUE, stderr = TRUE))
+  status <- attr(out, "status")
+  if (!is.null(status) && status != 0) stop("git failed: ", paste(out, collapse = "\n"))
+  out
+}
+
+set_git_user <- function(repo, name, email) {
+  git_cmd(repo, "config", "user.name", shQuote(name))
+  git_cmd(repo, "config", "user.email", shQuote(email))
+  invisible(repo)
+}
+
+# A temp git repo (plain git, repo-local identity, no signing) with `files`
+# committed as "initial". Returns its path.
+local_git_repo <- function(files, author = c("Ann", "ann@wig2.de"), env = parent.frame()) {
+  repo <- local_project(files, env = env)
+  git_cmd(repo, "init", "-q", "-b", "main")
+  set_git_user(repo, author[1], author[2])
+  git_cmd(repo, "config", "commit.gpgsign", "false")
+  git_cmd(repo, "add", "-A")
+  git_cmd(repo, "commit", "-q", "-m", "initial")
+  repo
+}
+
+# Write `lines` to `file` and commit as `author`; returns the SHA invisibly.
+commit_as <- function(repo, file, lines, author = c("Ann", "ann@wig2.de"), message = "change") {
+  full <- file.path(repo, file)
+  dir.create(dirname(full), recursive = TRUE, showWarnings = FALSE)
+  writeLines(lines, full)
+  git_cmd(repo, "add", "--", shQuote(file))
+  git_cmd(
+    repo,
+    "-c", shQuote(paste0("user.name=", author[1])),
+    "-c", shQuote(paste0("user.email=", author[2])),
+    "-c", "commit.gpgsign=false",
+    "commit", "-q", "-m", shQuote(message),
+    shQuote(paste0("--author=", author[1], " <", author[2], ">"))
+  )
+  invisible(git_cmd(repo, "rev-parse", "HEAD")[1])
+}
