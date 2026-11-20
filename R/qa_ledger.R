@@ -23,7 +23,9 @@ read_reviews <- function(path = ".") {
   files <- list.files(file.path(path, "qa", "reviews"), pattern = "\\.json$", full.names = TRUE)
   if (!length(files)) return(empty_reviews())
   str1 <- function(x) if (is.null(x) || !length(x) || is.na(x[[1]])) NA_character_ else as.character(x[[1]])
-  rows <- lapply(sort(files), function(f) {
+  # same-second entries tie on date: order by file stem, so "x" precedes "x-2"
+  files <- files[order(sub("\\.json$", "", basename(files)), method = "radix")]
+  rows <- lapply(files, function(f) {
     e <- jsonlite::fromJSON(f, simplifyVector = FALSE)
     row <- as.data.frame(lapply(stats::setNames(review_fields, review_fields), function(k) str1(e[[k]])),
                          stringsAsFactors = FALSE)
@@ -32,7 +34,7 @@ read_reviews <- function(path = ".") {
     row
   })
   out <- do.call(rbind, rows)
-  out <- out[order(out$date), , drop = FALSE]
+  out <- out[order(out$date, method = "radix"), , drop = FALSE]
   rownames(out) <- NULL
   out
 }
