@@ -22,8 +22,12 @@ git_exec <- function(path, args) {
     error = function(e) structure(character(), status = 1L)
   )
   status <- attr(out, "status")
+  # git writes UTF-8 (file contents as committed, metadata by default); mark
+  # it so, whatever the session locale
+  out <- as.character(out)
+  Encoding(out) <- "UTF-8"
   list(
-    out = enc2utf8(as.character(out)),
+    out = out,
     err = if (file.exists(err)) readLines(err, warn = FALSE) else character(),
     status = if (is.null(status)) 0L else status
   )
