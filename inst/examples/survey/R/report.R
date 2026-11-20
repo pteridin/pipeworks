@@ -50,3 +50,28 @@ plot_coefficients <- function(model_fit) {
     ggplot2::geom_pointrange(ggplot2::aes(xmin = low, xmax = high)) +
     ggplot2::labs(x = "Effect on score", y = NULL)
 }
+
+#' Histogram of satisfaction scores for one area
+#'
+#' Template function of the per-area `tar_map()` in `_targets.R`.
+#'
+#' @param data Responses of one area, with a numeric `score` column.
+#' @param area Area name, used as the plot title.
+#' @return A ggplot object.
+#' @family Reporting
+area_histogram <- function(data, area) {
+  score_histogram(data, title = area)
+}
+
+# Templates for the per-area map in _targets.R (together with tmpl_region_import).
+tmpl_region_report <- list(
+  tar_target(area_hist, area_histogram(area_data, area))
+)
+
+pipeline_report <- list(
+  tar_target(hist_raw, score_histogram(raw_data, title = "Raw submissions")),
+  tar_target(hist_clean, score_histogram(clean_data, title = "Clean responses")),
+  tar_target(region_summary, summarise_region(clean_data, regions), pattern = map(regions)),
+  tar_target(coef_plot, plot_coefficients(model_fit_full)),
+  tarchetypes::tar_render(report, "report.Rmd")
+)

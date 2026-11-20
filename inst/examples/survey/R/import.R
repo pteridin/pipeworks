@@ -17,7 +17,8 @@ read_survey <- function(path) {
       age = "i",
       tenure_years = "d",
       score = "d",
-      is_test = "l"
+      is_test = "l",
+      area = "c"
     )
   )
 }
@@ -41,3 +42,36 @@ clean_survey <- function(raw_data) {
       channel = factor(channel, levels = c("web", "phone", "store"))
     )
 }
+
+#' Select the responses of one area
+#'
+#' Template function of the per-area `tar_map()` in `_targets.R`.
+#'
+#' @param data Clean responses with an `area` column.
+#' @param area Either `"urban"` or `"rural"`.
+#' @return The rows of `data` that belong to `area`.
+#' @family Data import
+select_area <- function(data, area) {
+  dplyr::filter(data, .data$area == .env$area)
+}
+
+# Templates for the per-area map in _targets.R (together with tmpl_region_report).
+tmpl_region_import <- list(
+  tar_target(area_data, select_area(clean_data, area))
+)
+
+pipeline_import <- list(
+  tar_target(
+    raw_file,
+    "data/survey_2026.csv",
+    format = "file",
+    description = "Raw survey export, tracked as a file."
+  ),
+  tar_target(raw_data, read_survey(raw_file)),
+  tar_target(clean_data, clean_survey(raw_data)),
+  tar_target(
+    regions,
+    levels(droplevels(clean_data$region)),
+    description = "Regions present after cleaning."
+  )
+)

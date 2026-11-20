@@ -15,6 +15,13 @@ tar_read(hist_raw)
 tar_read(hist_clean)
 ```
 
+## Urban and rural
+
+```{r}
+tar_read(area_hist_urban)
+tar_read(area_hist_rural)
+```
+
 ## Scores by region
 
 ```{r}

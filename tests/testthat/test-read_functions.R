@@ -2,13 +2,13 @@ test_that("every top-level function is found with its source location", {
   fns <- read_functions(example_dir())
   expect_setequal(names(fns), c(
     "read_survey", "clean_survey", "build_features", "fit_score_model", "predict_scores",
-    "score_histogram", "summarise_region", "plot_coefficients", "rescale01"
+    "score_histogram", "summarise_region", "plot_coefficients", "rescale01", "select_area", "area_histogram"
   ))
   f <- fns$read_survey
   expect_equal(f$file, "R/import.R")
   expect_equal(f$doc_line, 1)
   expect_equal(f$line, 9)
-  expect_equal(f$end_line, 23)
+  expect_equal(f$end_line, 24)
 })
 
 test_that("roxygen fields are read", {
@@ -34,7 +34,8 @@ test_that("formals keep their defaults and the body is dedented", {
     list(name = "data", default = NA_character_),
     list(name = "title", default = NA_character_)
   ))
-  expect_match(fns$fit_score_model$body, "^stats::lm\\(")
+  expect_equal(fns$fit_score_model$formals[[2]]$name, "spec")
+  expect_match(fns$fit_score_model$body, "spec")
 })
 
 test_that("calls between project functions are linked", {

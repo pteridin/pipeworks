@@ -36,6 +36,12 @@ tests <- survey[1:6, ]
 tests$respondent_id <- sprintf("TEST%02d", 1:6)
 tests$is_test <- TRUE
 
+
+# Area (urban/rural), drawn last so the draws above stay unchanged.
+survey$area <- sample(c("urban", "rural"), n, replace = TRUE, prob = c(.6, .4))
+dupes$area <- survey$area[match(dupes$respondent_id, survey$respondent_id)]
+tests$area <- survey$area[1:6]
+
 survey <- rbind(survey, dupes, tests)
 survey <- survey[order(survey$submitted_at), ]
 

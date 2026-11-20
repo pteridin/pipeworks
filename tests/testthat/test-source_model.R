@@ -102,3 +102,10 @@ test_that("unresolvable and duplicate tar_map() calls fail clearly", {
   ))
   expect_error(read_source_text(same), "_targets.R:2.*_targets.R:1")
 })
+
+test_that("the example project parses statically with both maps", {
+  s <- read_source(example_dir())
+  maps <- s$items[s$items$kind == "map", ]
+  expect_equal(nrow(maps), 2)
+  expect_setequal(maps$id, c("map:model_fit", "map:area_data+area_hist"))
+})
