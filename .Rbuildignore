@@ -10,3 +10,5 @@
 ^\.mcp\.json$
 ^\.claude$
 ^\.superpowers$
+^\.jj$
+^docs$
