@@ -58,11 +58,20 @@ build_source <- function(texts, read_extra) {
   }
 
   map_of <- character()
+  map_where <- character()
   for (i in seq_along(recs)) {
     r <- recs[[i]]
     if (r$kind != "map") next
     templates <- unique(c(r$nested, unlist(holders[r$symbols], use.names = FALSE)))
+    where <- paste0(r$file, ":", r$line1)
+    if (!length(templates)) {
+      stop("tar_map() at ", where, " has no templates pipeworks can resolve", call. = FALSE)
+    }
     id <- paste0("map:", paste(templates, collapse = "+"))
+    if (id %in% names(map_where)) {
+      stop("tar_map() at ", where, " has the same templates as the tar_map() at ", map_where[[id]], call. = FALSE)
+    }
+    map_where[[id]] <- where
     recs[[i]]$name <- paste(templates, collapse = "+")
     recs[[i]]$id <- id
     for (t in templates) if (is.na(map_of[t])) map_of[t] <- id
@@ -140,7 +149,7 @@ parse_source_file <- function(file, lines, is_r) {
   }
 
   recs <- list()
-  seen <- character()
+  seen <- integer()
   for (i in seq_len(nrow(tops))) {
     top <- tops[i, ]
     e <- exprs[[i]]
@@ -160,8 +169,12 @@ parse_source_file <- function(file, lines, is_r) {
     callee <- callee[order(callee$line1, callee$col1), ]
     if (!nrow(callee)) {
       head <- if (!is.na(holder)) holder else top_call_name(e)
-      seen[head] <- if (is.na(seen[head])) 1L else seen[head] + 1L
-      oname <- if (!is.na(holder)) holder else paste0(head, "#", seen[[head]])
+      if (is.na(holder)) {
+        seen[head] <- if (is.na(seen[head])) 1L else seen[[head]] + 1L
+        oname <- paste0(head, "#", seen[[head]])
+      } else {
+        oname <- holder
+      }
       recs[[length(recs) + 1L]] <- source_record(
         "object", oname, file, top$line1, top$line2, node_hash(top$id),
         id = paste0("object:", file, ":", oname)

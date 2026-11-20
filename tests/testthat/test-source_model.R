@@ -81,3 +81,24 @@ test_that("empty projects give an empty item table", {
   expect_equal(nrow(s$items), 0)
   expect_true(all(c("id", "calls", "title") %in% names(s$items)))
 })
+
+test_that("unassigned calls with the same head are numbered per file", {
+  s <- read_source_text(list(
+    "R/a.R" = c("library(a)", "library(b)"),
+    "_targets.R" = c("library(c)", "list()")
+  ))
+  expect_setequal(s$items$id, c(
+    "object:R/a.R:library#1", "object:R/a.R:library#2",
+    "object:_targets.R:library#1", "object:_targets.R:list#1"
+  ))
+})
+
+test_that("unresolvable and duplicate tar_map() calls fail clearly", {
+  none <- list("_targets.R" = c("x <- 1", "tar_map(values = list(a = 1))"))
+  expect_error(read_source_text(none), "_targets.R:2.*no templates")
+  same <- list("_targets.R" = c(
+    "tar_map(values = list(a = 1), tar_target(t, 1))",
+    "tar_map(values = list(a = 1), tar_target(t, 1))"
+  ))
+  expect_error(read_source_text(same), "_targets.R:2.*_targets.R:1")
+})
