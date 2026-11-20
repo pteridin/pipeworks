@@ -6,15 +6,46 @@ embedded as JSON. RStudio stays the main editor.
 
 ## Model
 
-- **Target** comes from `tar_manifest()` / `tar_network()`. Its `mode` is
-  `function` (calls a project function), `expression`, or `factory`
-  (tarchetypes, e.g. `tar_render()`).
+- **Block** is one file in `R/`: its functions plus a
+  `pipeline_<file> <- list(...)` with its targets. `_targets.R` only composes
+  the blocks. Blocks are drawn as boxes on the canvas (they replaced the
+  roxygen `@family` grouping).
+- **Target** comes from `tar_manifest()` / `tar_network()` in the editor
+  (`read_pipeline()`). Its `mode` is `function`, `expression` or `factory`
+  (tarchetypes, e.g. `tar_render()`). `tar_map()` variants are shown folded
+  as one pill.
 - **Function** is a top-level definition in `R/`. Its roxygen block is the
-  source of truth for titles, `@param`, `@return` and `@family`. One function
-  can back several targets.
+  source of truth for titles, `@param` and `@return`. One function can back
+  several targets.
 - **Arguments** are matched to formals per call (`target_call()`), so an
-  argument name can differ from the target passed in it (`path` ← `raw_file`).
-- **Family** is the roxygen `@family`, drawn as a box on the canvas.
+  argument name can differ from the target passed in it.
+
+## QA reviews
+
+A second analyst reviews the code item by item; verdicts live in the repo.
+The QA engine is static: it parses source files and never runs pipeline code.
+
+- **Item** (`read_source()`): ids `function:<name>`, `target:<name>`,
+  `map:<templates joined by "+">`, `object:<file>:<name>`, `file:<path>`.
+  Hash = MD5 of the parse tokens without comments and whitespace.
+- **Ledger** `qa/reviews/*.json`: one file per verdict, never edited. Latest
+  entry per item wins. Optional `qa/people` (DCF: `Name`, `Emails`) maps
+  emails to one person.
+- **Status** (`qa_status()`): `unreviewed`, `changed` (hash differs, also
+  after a revert), `correct`/`questionable`/`wrong`, plus the non-failing
+  hint `check_again` (a callee changed) and `self_reviewed` (entry's reviewer
+  equals its recorded author; compared by stored emails, so squash and rebase
+  are safe). Deleted items leave only orphan entries.
+- `qa_check()` is the CI gate; `qa_report()` renders a PDF with Quarto/Typst
+  (draft unless `qa_check()` passes; `final = TRUE` refuses otherwise).
+- Code: `R/source_model.R` (items, hashes), `R/git.R` (git via `system2`),
+  `R/qa_ledger.R` (read/write entries, people), `R/qa.R` (`qa_review()`),
+  `R/qa_status.R` (`qa_status()`, `qa_check()`), `R/qa_report.R` +
+  `inst/report/qa-report.qmd`.
+- Test helpers (`tests/testthat/helper-example.R`): `local_project()`,
+  `local_git_repo()`, `commit_as()`, `set_git_user()`, `git_cmd()`,
+  `reviewed_repo()`, `read_example()`. `example_project(git = TRUE)` is the
+  review scenario (`test-example.R`).
 
 ## R code navigation: rairai
 
@@ -45,6 +76,8 @@ deliberate (see its `README.md`, "Edge cases"); keep them intact.
   their own namespace; form controls use `.inp`, `.txt`, `.select`. A shared
   class name once collapsed selected boxes to zero width.
 - jsdom smoke tests check logic only; layout bugs need a real browser.
+- The editor shows QA status read-only (overlay, progress, diff against
+  base); verdicts are still set with `qa_review()` in R.
 - Edits in the editor stay in memory: writing back to files and the live
   RStudio connection are the next milestone.
 

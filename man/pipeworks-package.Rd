@@ -5,7 +5,7 @@
 \alias{pipeworks-package}
 \title{pipeworks: Visual Editor for 'targets' Pipelines}
 \description{
-Shows a 'targets' pipeline as a wiring diagram. Targets are grouped by their roxygen '@family' tag, and the roxygen documentation of each target's function is the primary source of information. Started from the R console with pipeworks(), so 'RStudio' stays the main editor.
+Shows a 'targets' pipeline as a wiring diagram. Each file in R/ is a block, and the roxygen documentation of each target's function is the primary source of information. Also supports quality assurance: a second person records a verdict per function, target and other code item, the verdicts are kept as files in the repository, 'qa_check()' gates a CI job on them, and 'qa_report()' renders a PDF. Started from the R console, so 'RStudio' stays the main editor.
 }
 \author{
 \strong{Maintainer}: Tobias Heidler \email{git.tobias@heidler.ovh}
