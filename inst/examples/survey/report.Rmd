@@ -1,0 +1,35 @@
+---
+title: "Customer survey 2026"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+library(targets)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+## Responses
+
+```{r}
+tar_read(hist_raw)
+tar_read(hist_clean)
+```
+
+## Scores by region
+
+```{r}
+knitr::kable(tar_read(region_summary), digits = 2)
+```
+
+## Model
+
+```{r}
+tar_read(coef_plot)
+```
+
+```{r}
+preds <- tar_read(predictions)
+```
+
+The model explains the scores with a mean absolute error of
+`r round(mean(abs(preds$score - preds$predicted)), 2)` points.

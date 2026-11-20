@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "rairai": {
+      "type": "stdio",
+      "command": "Rscript",
+      "args": [
+        "-e",
+        "rairai::serve(path = '/Users/tobias/Projekte/R/pipeworks')"
+      ],
+      "env": {}
+    }
+  }
+}

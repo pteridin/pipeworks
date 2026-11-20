@@ -1,0 +1,12 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^mockup$
+^tools$
+^\.DS_Store$
+^inst/examples/survey/_targets$
+^inst/examples/survey/report\.html$
+^inst/examples/survey/\.Rproj\.user$
+^CLAUDE\.md$
+^\.mcp\.json$
+^\.claude$
+^\.superpowers$

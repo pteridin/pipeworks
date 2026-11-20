@@ -1,0 +1,30 @@
+Package: pipeworks
+Title: Visual Editor for 'targets' Pipelines
+Version: 0.0.0.9000
+Authors@R:
+    person("Tobias", "Heidler", , "git.tobias@heidler.ovh", role = c("aut", "cre"))
+Description: Shows a 'targets' pipeline as a wiring diagram. Targets are grouped
+    by their roxygen '@family' tag, and the roxygen documentation of each
+    target's function is the primary source of information. Started from the
+    R console with pipeworks(), so 'RStudio' stays the main editor.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 8.0.0
+Depends:
+    R (>= 4.1.0)
+Imports:
+    jsonlite,
+    roxygen2,
+    targets (>= 1.5.0),
+    utils,
+    withr
+Suggests:
+    dplyr,
+    ggplot2,
+    readr,
+    rmarkdown,
+    rstudioapi,
+    tarchetypes,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3

@@ -1,0 +1,1234 @@
+<title>Pipeworks Editor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap">
+<style>
+/* Layout: two-pane workbench. Families, helpers and checks | wiring canvas with @family boxes and the source files. Editing happens in a modal. */
+:root {
+  --bg: #e7ecea;
+  --panel: #fbfcfc;
+  --canvas: #f3f6f5;
+  --grid: #c9d3d0;
+  --fg: #16201e;
+  --muted: #5a6966;
+  --line: #d3dbd8;
+  --soft: #eaf0ee;
+  --accent: #0b7a6a;
+  --accent-ink: #ffffff;
+  --accent-soft: #d5ede8;
+  --pipe: #93a29f;
+  --g1: #2f64c9; --g2: #b8650a; --g3: #7b4fd6; --g4: #0b7a6a; --g5: #c8325e; --g6: #5b7f1d; --g0: #8b9895;
+  --s-ok: #2c8f45; --s-out: #c98a00; --s-err: #c8325e; --s-new: #8b9895;
+  --warn-bg: #fff2d6; --warn-fg: #7a5200;
+  --code-bg: #f1f4f3; --hit-bg: #fff4cf;
+  --c-rox: #4d7d6f; --c-tag: #0b7a6a; --c-str: #a1450d; --c-kw: #7b4fd6; --c-fn: #2f64c9;
+  --scrim: rgb(14 24 22 / .42);
+  --shadow: 0 1px 2px rgb(20 40 36 / .08), 0 4px 14px rgb(20 40 36 / .06);
+  --shadow-lg: 0 10px 40px rgb(10 25 22 / .22);
+  --f-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-head: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c1211; --panel: #141c1b; --canvas: #101716; --grid: #24302e; --fg: #e2ebe9; --muted: #92a3a0;
+    --line: #253230; --soft: #1b2524; --accent: #38c2aa; --accent-ink: #062520; --accent-soft: #163a34; --pipe: #4f605d;
+    --g1: #6f9cf2; --g2: #e9a14a; --g3: #a988f2; --g4: #38c2aa; --g5: #f0628c; --g6: #9cc45a; --g0: #6c7c79;
+    --s-ok: #4cc26a; --s-out: #e8b330; --s-err: #f0628c; --s-new: #6c7c79; --warn-bg: #3a2f12; --warn-fg: #f3cf7a;
+    --code-bg: #0f1615; --hit-bg: #3a3214; --c-rox: #7fb3a4; --c-tag: #38c2aa; --c-str: #f0a36b; --c-kw: #b89af5; --c-fn: #7fa8f5;
+    --scrim: rgb(0 0 0 / .6);
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 6px 18px rgb(0 0 0 / .3); --shadow-lg: 0 12px 48px rgb(0 0 0 / .6);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c1211; --panel: #141c1b; --canvas: #101716; --grid: #24302e; --fg: #e2ebe9; --muted: #92a3a0;
+  --line: #253230; --soft: #1b2524; --accent: #38c2aa; --accent-ink: #062520; --accent-soft: #163a34; --pipe: #4f605d;
+  --g1: #6f9cf2; --g2: #e9a14a; --g3: #a988f2; --g4: #38c2aa; --g5: #f0628c; --g6: #9cc45a; --g0: #6c7c79;
+  --s-ok: #4cc26a; --s-out: #e8b330; --s-err: #f0628c; --s-new: #6c7c79; --warn-bg: #3a2f12; --warn-fg: #f3cf7a;
+  --code-bg: #0f1615; --hit-bg: #3a3214; --c-rox: #7fb3a4; --c-tag: #38c2aa; --c-str: #f0a36b; --c-kw: #b89af5; --c-fn: #7fa8f5;
+  --scrim: rgb(0 0 0 / .6);
+  --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 6px 18px rgb(0 0 0 / .3); --shadow-lg: 0 12px 48px rgb(0 0 0 / .6);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-ui); font-size: 13.5px; line-height: 1.45; }
+button, input, textarea, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, .mono { font-family: var(--f-mono); font-size: .93em; }
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-width: 0; min-height: 0; }
+.spacer { flex: 1; }
+
+/* Top bar */
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 9px; margin-right: 4px; }
+.brand b { font-family: var(--f-head); font-size: 19px; letter-spacing: .01em; }
+.session { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); padding: 3px 9px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel); }
+.session::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--s-ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-ok) 25%, transparent); }
+.toolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--panel); cursor: pointer; white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.07); }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover { background: var(--soft); border-color: var(--line); }
+.btn.small { height: 26px; padding: 0 9px; font-size: 12.5px; }
+.btn.danger:hover { border-color: var(--s-err); color: var(--s-err); }
+.btn:disabled { opacity: .5; cursor: default; }
+kbd { font-family: var(--f-mono); font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--soft); }
+.help { margin: 0; font-size: 12.5px; color: var(--muted); }
+
+/* Sidebar */
+.sidebar { display: flex; flex-direction: column; overflow: auto; }
+.sb-section { padding: 14px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.sb-section:last-child { border-bottom: 0; }
+.eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.stat b { display: block; font-family: var(--f-head); font-size: 22px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11px; color: var(--muted); }
+.stat.warn b { color: var(--s-out); }
+.fam { display: flex; flex-direction: column; gap: 1px; }
+.fam-head { display: flex; align-items: baseline; gap: 7px; font-size: 12.5px; font-weight: 600; padding: 2px 4px; }
+.fam-head .sw { width: 9px; height: 9px; border-radius: 2px; background: var(--gc); flex: none; align-self: center; }
+.fam-head small { margin-left: auto; color: var(--muted); font-weight: 400; font-family: var(--f-mono); font-size: 11px; }
+.t-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 8px 4px 20px; border: 0; border-radius: 6px;
+  background: transparent; text-align: left; cursor: pointer; font-family: var(--f-mono); font-size: 12.5px;
+}
+.t-item:hover { background: var(--soft); }
+.t-item.sel { background: var(--accent-soft); }
+.t-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-item .st { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); flex: none; }
+.badge { font-family: var(--f-ui); font-size: 10.5px; font-weight: 600; padding: 0 6px; border-radius: 99px; background: var(--warn-bg); color: var(--warn-fg); }
+.check { display: flex; gap: 8px; align-items: baseline; padding: 5px 6px; border-radius: 6px; border: 0; background: transparent; text-align: left; cursor: pointer; width: 100%; font-size: 12.5px; }
+.check:hover { background: var(--soft); }
+.check .sym { color: var(--s-out); font-weight: 700; flex: none; }
+.all-good { font-size: 12.5px; color: var(--s-ok); margin: 0; }
+.legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+/* Stage */
+.stage { display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; }
+.canvas {
+  position: relative; overflow: hidden; cursor: grab; touch-action: none; border-radius: 10px 10px 0 0;
+  background-color: var(--canvas);
+  background-image: radial-gradient(circle, var(--grid) 1.1px, transparent 1.3px);
+  user-select: none; -webkit-user-select: none;
+}
+.canvas.panning { cursor: grabbing; }
+.world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+svg.edges { position: absolute; left: -5000px; top: -5000px; width: 10000px; height: 10000px; pointer-events: none; overflow: visible; }
+.edge { fill: none; stroke: var(--pipe); stroke-width: 2.2; }
+.edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.edge-g:hover .edge { stroke: var(--accent); }
+.edge-g.sel .edge { stroke: var(--accent); stroke-width: 3; }
+.edge-g.hl .edge { stroke: var(--accent); stroke-width: 2.6; stroke-dasharray: 7 5; animation: flow .7s linear infinite; }
+.edge-g.dim .edge { opacity: .2; }
+.edge-del { pointer-events: all; cursor: pointer; }
+.edge-del circle { fill: var(--panel); stroke: var(--s-err); stroke-width: 1.5; }
+.edge-del path { stroke: var(--s-err); stroke-width: 1.8; stroke-linecap: round; }
+.edge-temp { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-dasharray: 5 5; }
+@keyframes flow { to { stroke-dashoffset: -12; } }
+
+.group {
+  position: absolute; left: 0; top: 0; border-radius: 12px;
+  background: color-mix(in srgb, var(--gc) 6%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--gc) 32%, transparent);
+}
+.group.drop { border-style: dashed; border-color: var(--gc); background: color-mix(in srgb, var(--gc) 13%, transparent); }
+.g-label {
+  position: absolute; left: 12px; top: 7px; display: inline-flex; gap: 7px; align-items: baseline; cursor: move;
+  font-size: 13px; font-weight: 700; color: var(--gc); white-space: nowrap; padding: 1px 4px; border-radius: 5px;
+}
+.g-label:hover { background: color-mix(in srgb, var(--gc) 12%, transparent); }
+.g-label code { font-weight: 500; font-size: 11px; opacity: .85; }
+.g-label small { font-weight: 400; color: var(--muted); font-family: var(--f-mono); font-size: 11px; }
+
+.node {
+  position: absolute; left: 0; top: 0; width: 232px; padding: 9px 12px 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.node:hover { border-color: var(--pipe); }
+.node.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow); }
+.node.dim { opacity: .35; }
+.focus-sel .node.dim { opacity: .55; }
+.focus-sel .edge-g.dim .edge { opacity: .4; }
+.node.dragging { box-shadow: var(--shadow-lg); z-index: 3; }
+.node.drop-ok { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow); }
+.node.drop-bad { border-color: var(--s-err); }
+.n-top { display: flex; align-items: center; gap: 8px; }
+.n-name { font-family: var(--f-mono); font-weight: 600; font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.n-status { width: 9px; height: 9px; border-radius: 50%; background: var(--sc); flex: none; }
+.status-running .n-status { animation: pulse .6s ease-in-out infinite alternate; }
+@keyframes pulse { from { transform: scale(.7); } to { transform: scale(1.5); } }
+.n-call { font-family: var(--f-mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.n-title { margin-top: 5px; font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.n-title.empty { color: var(--muted); font-style: italic; }
+.n-foot { display: flex; gap: 5px; margin-top: 7px; flex-wrap: wrap; }
+.chip { font-family: var(--f-mono); font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--soft); color: var(--muted); }
+.chip.warn { font-family: var(--f-ui); font-weight: 600; background: var(--warn-bg); color: var(--warn-fg); }
+.port { position: absolute; top: 13px; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); border: 2.5px solid var(--gc); }
+.port-in { left: -8px; }
+.port-out { right: -8px; cursor: crosshair; }
+.port-out::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; }
+.port-out:hover { background: var(--gc); transform: scale(1.2); }
+.g-1 { --gc: var(--g1); } .g-2 { --gc: var(--g2); } .g-3 { --gc: var(--g3); } .g-4 { --gc: var(--g4); } .g-5 { --gc: var(--g5); } .g-6 { --gc: var(--g6); } .g-0 { --gc: var(--g0); }
+.status-uptodate { --sc: var(--s-ok); } .status-outdated { --sc: var(--s-out); } .status-errored { --sc: var(--s-err); } .status-new { --sc: var(--s-new); } .status-running { --sc: var(--accent); }
+
+.nodebar {
+  position: absolute; left: 0; top: 0; display: flex; gap: 2px; padding: 3px; z-index: 4;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); white-space: nowrap;
+}
+.nodebar button { height: 26px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; cursor: pointer; font-size: 12.5px; }
+.nodebar button:hover { background: var(--soft); }
+.nodebar button.rs { color: var(--accent); font-weight: 600; }
+.nodebar button.rm:hover { color: var(--s-err); }
+
+.canvas-hint { position: absolute; left: 12px; top: 10px; right: 12px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); pointer-events: none; }
+.canvas-hint span { background: color-mix(in srgb, var(--canvas) 85%, transparent); padding: 2px 4px; border-radius: 4px; }
+.canvas-hint b { color: var(--fg); font-weight: 600; }
+.zoombar { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 3px; box-shadow: var(--shadow); }
+.zoombar button { width: 28px; height: 26px; border: 0; background: transparent; border-radius: 5px; cursor: pointer; font-size: 15px; }
+.zoombar button:hover { background: var(--soft); }
+.zoombar output { min-width: 46px; text-align: center; font-family: var(--f-mono); font-size: 11.5px; align-self: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+.canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--muted); pointer-events: none; }
+
+/* Drawer */
+.drawer { border-top: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.drawer-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px; flex-wrap: wrap; }
+.tab { height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); }
+.tab[aria-selected="true"] { background: var(--soft); color: var(--fg); font-weight: 600; }
+.drawer-body { height: 0; overflow: hidden; transition: height .2s ease; }
+.drawer.open .drawer-body { height: min(38vh, 340px); overflow: auto; border-top: 1px solid var(--line); }
+pre.code { margin: 0; padding: 10px 0; font-family: var(--f-mono); font-size: 12.5px; line-height: 1.55; background: var(--code-bg); min-height: 100%; counter-reset: ln; }
+pre.code .ln { display: block; padding: 0 16px 0 0; white-space: pre; }
+pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 3.4em; padding-right: 1em; text-align: right; color: var(--muted); opacity: .6; user-select: none; }
+pre.code .ln.hit { background: var(--hit-bg); }
+pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size: 12px; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--line); border-radius: 7px; overflow-x: auto; white-space: pre; }
+.c-rox { color: var(--c-rox); } .c-tag { color: var(--c-tag); font-weight: 600; } .c-str { color: var(--c-str); }
+.c-com { color: var(--muted); font-style: italic; } .c-kw { color: var(--c-kw); font-weight: 500; } .c-fn { color: var(--c-fn); } .c-op { color: var(--muted); }
+
+/* Modal */
+.overlay { position: fixed; inset: 0; z-index: 30; background: var(--scrim); display: grid; place-items: center;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.modal { width: min(1080px, 100%); max-height: 100%; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg); overflow: hidden; animation: pop .16s ease-out; }
+@keyframes pop { from { transform: translateY(8px) scale(.985); opacity: 0; } }
+.m-head { padding: 14px 18px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.m-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.m-kicker { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--gc); }
+.m-kicker::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: var(--gc); }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--sc); }
+.loc { font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+.m-name { flex: 1; min-width: 0; font-family: var(--f-mono); font-weight: 600; font-size: 19px; border: 1px solid transparent; border-radius: 6px; padding: 2px 6px; margin-left: -7px; background: transparent; }
+.m-name:hover { border-color: var(--line); }
+.m-name:focus { border-color: var(--accent); background: var(--canvas); outline: none; }
+.m-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); overflow: auto; min-height: 0; }
+.m-col { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.m-col + .m-col { border-left: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 55%, var(--panel)); }
+.m-col h3 { margin: 0; font-family: var(--f-head); font-size: 15px; font-weight: 700; display: flex; gap: 8px; align-items: baseline; text-wrap: balance; }
+.m-col h3 small { font-family: var(--f-ui); font-weight: 400; color: var(--muted); font-size: 12px; }
+.m-foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field > label, .lbl { font-size: 12px; font-weight: 600; color: var(--muted); display: flex; gap: 6px; align-items: baseline; }
+.field > label code, .lbl code { font-weight: 500; color: var(--c-tag); font-size: 11.5px; }
+.inp, .txt, .select { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: var(--canvas); padding: 6px 9px; }
+.m-col + .m-col .inp, .m-col + .m-col .txt, .m-col + .m-col .select { background: var(--panel); }
+.inp:focus, .txt:focus, .select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.txt { resize: vertical; min-height: 54px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.param { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.param .pn { font-family: var(--f-mono); font-size: 12.5px; font-weight: 600; padding-top: 6px; min-width: 7ch; }
+.param .txt { min-height: 34px; }
+.sig { font-family: var(--f-mono); font-size: 12.5px; padding: 6px 9px; background: var(--code-bg); border-radius: 7px 7px 0 0; border: 1px solid var(--line); border-bottom: 0; overflow-x: auto; white-space: pre; }
+.sig.end { border-radius: 0 0 7px 7px; border: 1px solid var(--line); border-top: 0; }
+.body-txt { border-radius: 0 !important; min-height: 120px; padding-left: 24px; font-family: var(--f-mono); font-size: 12.5px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; padding: 2px; background: var(--canvas); align-self: flex-start; }
+.seg button { border: 0; background: transparent; padding: 3px 10px; border-radius: 5px; cursor: pointer; font-size: 12.5px; }
+.seg button[aria-pressed="true"] { background: var(--panel); box-shadow: var(--shadow); font-weight: 600; }
+.issues { display: flex; flex-direction: column; gap: 4px; }
+.issue { font-size: 12.5px; background: var(--warn-bg); color: var(--warn-fg); padding: 5px 9px; border-radius: 6px; }
+.err-msg { color: var(--s-err); font-size: 12px; }
+.invalid, .invalid:focus { border-color: var(--s-err) !important; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Toast */
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px)); z-index: 40;
+  background: var(--fg); color: var(--panel); padding: 9px 14px; border-radius: 8px; font-size: 13px;
+  display: flex; gap: 12px; align-items: center; transition: opacity .18s, transform .18s; pointer-events: none; max-width: calc(100vw - 32px);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+.toast code { background: color-mix(in srgb, var(--panel) 16%, transparent); padding: 1px 5px; border-radius: 4px; }
+.toast button { background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
+
+@media (max-width: 1000px) { .app { grid-template-columns: 210px minmax(0, 1fr); } }
+@media (max-width: 760px) {
+  html, body { height: auto; }
+  .app { display: flex; flex-direction: column; height: auto; }
+  .stage { order: 1; height: 72vh; min-height: 420px; }
+  .sidebar { order: 2; overflow: visible; }
+  .canvas-hint, .hide-narrow { display: none; }
+  .m-body { grid-template-columns: 1fr; }
+  .m-col + .m-col { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+<style>
+/* Additions for the data-driven editor */
+.status-unknown { --sc: var(--s-new); }
+.session code { font-size: 11.5px; }
+.dirty { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warn-fg); background: var(--warn-bg); padding: 3px 9px; border-radius: 99px; }
+.notice { font-size: 12.5px; padding: 8px 10px; border-radius: 7px; background: var(--accent-soft); color: var(--fg); }
+.notice code { font-weight: 600; }
+.argrow { display: grid; grid-template-columns: minmax(7ch, auto) minmax(0, 1fr); gap: 4px 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--line); }
+.argrow:first-of-type { border-top: 0; }
+.argrow .pn { font-family: var(--f-mono); font-size: 12.5px; font-weight: 600; padding-top: 6px; }
+.argrow .src { grid-column: 2; font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.argrow .src code { color: var(--fg); }
+.argrow .src .tgt { font-family: var(--f-mono); font-size: 11.5px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); }
+.argrow .txt { grid-column: 2; min-height: 34px; }
+.deps { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.dep { display: inline-flex; align-items: center; gap: 4px; font-family: var(--f-mono); font-size: 12px; padding: 2px 4px 2px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); }
+.dep button { border: 0; background: transparent; cursor: pointer; color: var(--muted); width: 20px; height: 20px; border-radius: 4px; }
+.dep button:hover { color: var(--s-err); background: var(--soft); }
+.helper { display: flex; flex-direction: column; gap: 0; width: 100%; border: 0; background: transparent; text-align: left; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.helper:hover { background: var(--soft); }
+.helper b { font-family: var(--f-mono); font-size: 12.5px; font-weight: 500; }
+.helper span { font-size: 11.5px; color: var(--muted); }
+.nodata { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: var(--bg); z-index: 50; }
+.nodata h1 { font-family: var(--f-head); margin: 0 0 8px; }
+</style>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+        <rect x="1" y="3" width="8" height="8" rx="2" fill="var(--g1)"/>
+        <rect x="17" y="15" width="8" height="8" rx="2" fill="var(--g2)"/>
+        <path d="M9 7 H13 a2 2 0 0 1 2 2 V17 a2 2 0 0 0 2 2" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      <b>pipeworks</b>
+    </div>
+    <span class="session" id="session" title="Run pipeworks::pipeworks() again to refresh"></span>
+    <span class="dirty" id="dirty" hidden title="Writing changes back to your files is not implemented yet">Changes stay in this view</span>
+    <div class="spacer"></div>
+    <div class="toolbar">
+      <button class="btn primary" id="btn-add" title="Add a target (N)">+ Add target</button>
+      <button class="btn" id="btn-layout" title="Arrange by stage and @family (L)">Auto-layout</button>
+      <button class="btn" id="btn-undo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
+    </div>
+  </header>
+
+  <aside class="panel sidebar" aria-label="Pipeline overview">
+    <div class="sb-section">
+      <p class="eyebrow">Pipeline</p>
+      <div class="stats" id="stats"></div>
+    </div>
+    <div class="sb-section">
+      <p class="eyebrow">Families <code>@family</code></p>
+      <div id="fams"></div>
+    </div>
+    <div class="sb-section" id="helpers-section">
+      <p class="eyebrow">Helper functions</p>
+      <div id="helpers"></div>
+    </div>
+    <div class="sb-section">
+      <p class="eyebrow">Roxygen checks</p>
+      <div id="checks"></div>
+    </div>
+    <div class="sb-section">
+      <p class="eyebrow">Build status</p>
+      <div class="legend">
+        <span><i style="background:var(--s-ok)"></i>Up to date</span>
+        <span><i style="background:var(--s-out)"></i>Outdated</span>
+        <span><i style="background:var(--s-err)"></i>Errored</span>
+        <span><i style="background:var(--s-new)"></i>Never run</span>
+      </div>
+    </div>
+    <div class="sb-section">
+      <button class="btn small" id="btn-reset">Discard changes</button>
+    </div>
+  </aside>
+
+  <main class="panel stage">
+    <div class="canvas" id="canvas">
+      <div class="world" id="world">
+        <div id="groups"></div>
+        <svg class="edges" id="edges" viewBox="-5000 -5000 10000 10000" aria-hidden="true"></svg>
+        <div id="nodes"></div>
+        <div class="nodebar" id="nodebar" hidden>
+          <button data-act="edit">Edit</button>
+          <button data-act="rstudio" class="rs">Open in RStudio</button>
+          <button data-act="remove" class="rm">Remove</button>
+        </div>
+      </div>
+      <div class="canvas-empty" id="canvas-empty" hidden><p>No targets yet.<br>Double-click here or use “Add target”.</p></div>
+      <div class="canvas-hint">
+        <span><b>Double-click</b> a target to edit it</span>
+        <span><b>Drag ●</b> onto a target to plug it in</span>
+        <span><b>Drop a target</b> into a box to change its <code>@family</code></span>
+      </div>
+      <div class="zoombar">
+        <button id="z-out" title="Zoom out" aria-label="Zoom out">−</button>
+        <output id="z-val">100%</output>
+        <button id="z-in" title="Zoom in" aria-label="Zoom in">+</button>
+        <button id="z-fit" title="Fit pipeline in view" aria-label="Fit pipeline in view">⤢</button>
+      </div>
+    </div>
+    <div class="drawer" id="drawer">
+      <div class="drawer-bar" role="tablist" id="tabs"></div>
+      <div class="drawer-body" id="drawer-body"><pre class="code" id="code"></pre></div>
+    </div>
+  </main>
+</div>
+
+<div class="overlay" id="overlay" hidden><div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="m-name"></div></div>
+<div class="toast" id="toast" role="status"><span id="toast-msg"></span><button id="toast-act" hidden>Undo</button></div>
+<div class="nodata" id="nodata" hidden><div><h1>No pipeline loaded</h1><p class="help">Open this editor from R with <code>pipeworks::pipeworks()</code> in a targets project.</p></div></div>
+
+<script id="pipeworks-data" type="application/json">null</script>
+<script>
+(() => {
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const arr = x => Array.isArray(x) ? x : (x == null ? [] : [x]);
+const NODE_W = 232, NODE_H = 112, PORT_Y = 20, GX = 300, GY = 148, HEAD = 36, PAD = 16, ROWGAP = 54;
+const STATUS = { uptodate: 'Up to date', outdated: 'Outdated', errored: 'Errored', new: 'Never run', unknown: 'Status not read' };
+const FORMATS = ['rds', 'qs', 'parquet', 'feather', 'file', 'url'];
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- Load the model written by pipeworks::pipeworks() ---------- */
+let RAW = null;
+try { RAW = JSON.parse($('#pipeworks-data').textContent); } catch { RAW = null; }
+if (!RAW || !RAW.targets) { $('#nodata').hidden = false; return; }
+
+function fromModel(D) {
+  const fns = {};
+  arr(D.functions).forEach(f => {
+    fns[f.name] = {
+      name: f.name, file: f.file, doc_line: f.doc_line, line: f.line, end_line: f.end_line,
+      title: f.title || '', description: f.description || '', returns: f.returns || '', family: f.family || '',
+      params: Array.isArray(f.params) || !f.params ? {} : { ...f.params },
+      keywords: arr(f.keywords), formals: arr(f.formals).map(x => ({ name: x.name, default: x.default ?? null })),
+      body: f.body || '', calls: arr(f.calls), called_by: arr(f.called_by),
+    };
+  });
+  const targets = {};
+  arr(D.targets).forEach(t => {
+    targets[t.name] = {
+      id: t.name, name: t.name, mode: t.mode, fn: t.fn || '', type: t.type, command: t.command,
+      args: arr(t.args).map(a => ({ name: a.name, value: a.value, kind: a.kind, named: !!a.named, refs: arr(a.targets) })),
+      pattern: t.pattern || '', description: t.description || '', format: t.format || 'rds', status: t.status || 'unknown',
+      factory: t.factory || '', source: t.source || '', x: 0, y: 0,
+    };
+  });
+  return { targets, fns, edges: arr(D.edges).map(e => ({ from: e.from, to: e.to })), sel: null };
+}
+const FILES = Object.fromEntries(arr(RAW.files).map(f => [f.path, f.text]));
+let S = fromModel(RAW);
+let view = { x: 40, y: 60, k: 1 };
+let hover = null, drawerTab = '_targets.R', hitLines = null;
+const undoStack = [];
+
+const snap = () => JSON.stringify({ targets: S.targets, fns: S.fns, edges: S.edges });
+function push(s = snap()) { if (undoStack[undoStack.length - 1] !== s) undoStack.push(s); if (undoStack.length > 100) undoStack.shift(); updateDirty(); }
+function updateDirty() { $('#btn-undo').disabled = !undoStack.length; $('#dirty').hidden = !undoStack.length; }
+function undo() {
+  const s = undoStack.pop(); if (!s) return toast('Nothing to undo.');
+  Object.assign(S, JSON.parse(s));
+  if (S.sel && S.sel.type === 'node' && !S.targets[S.sel.id]) S.sel = null;
+  if (S.sel && S.sel.type === 'edge' && !edgeById(S.sel.id)) S.sel = null;
+  updateDirty(); renderAll();
+}
+
+/* ---------- Graph helpers ---------- */
+const ids = () => Object.keys(S.targets);
+const deps = id => S.edges.filter(e => e.to === id).map(e => e.from);
+const downs = id => S.edges.filter(e => e.from === id).map(e => e.to);
+const nm = id => S.targets[id]?.name ?? id;
+const edgeId = e => e.from + '>' + e.to;
+const edgeById = eid => S.edges.find(e => edgeId(e) === eid);
+const fnOf = id => { const t = S.targets[id]; return t && t.mode === 'function' ? S.fns[t.fn] : null; };
+const usedBy = fn => ids().filter(i => S.targets[i].mode === 'function' && S.targets[i].fn === fn);
+function reaches(a, b) { const seen = new Set(), st = [a]; while (st.length) { const n = st.pop(); if (n === b) return true; if (seen.has(n)) continue; seen.add(n); st.push(...downs(n)); } return false; }
+function closure(id, next) { const out = new Set(), st = [...next(id)]; while (st.length) { const n = st.pop(); if (out.has(n)) continue; out.add(n); st.push(...next(n)); } return out; }
+function topo() {
+  const indeg = Object.fromEntries(ids().map(i => [i, deps(i).length]));
+  const q = ids().filter(i => !indeg[i]), out = [];
+  while (q.length) { const n = q.shift(); out.push(n); downs(n).forEach(d => { if (--indeg[d] === 0) q.push(d); }); }
+  return out;
+}
+function stages() {
+  const layer = {}, order = topo();
+  order.forEach(id => { const d = deps(id); layer[id] = d.length ? Math.max(...d.map(p => layer[p])) + 1 : 0; });
+  [...order].reverse().forEach(id => { if (!deps(id).length) { const c = downs(id); if (c.length) layer[id] = Math.min(...c.map(x => layer[x])) - 1; } });
+  return layer;
+}
+const validName = s => /^[A-Za-z.][A-Za-z0-9._]*$/.test(s) && !/^\.\d/.test(s);
+/* Targets without a roxygen block join the family of their consumers when that is unambiguous. */
+function famOf(id) {
+  const f = fnOf(id); if (f) return f.family;
+  const fams = [...new Set(downs(id).map(d => fnOf(d)?.family || ''))];
+  return fams.length === 1 ? fams[0] : '';
+}
+function families() { const seen = []; topo().forEach(id => { const f = famOf(id); if (f && !seen.includes(f)) seen.push(f); }); return seen; }
+const famClass = f => { if (!f) return 'g-0'; const i = families().indexOf(f); return 'g-' + (i < 0 ? 0 : (i % 6) + 1); };
+const slug = f => (f || 'functions').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+const argValue = a => a.kind === 'target' ? nm(a.refs[0]) : a.value;
+const argText = a => a.named ? `${a.name} = ${argValue(a)}` : argValue(a);
+const titleOf = id => { const t = S.targets[id], f = fnOf(id); return f ? f.title : t.description || (t.mode === 'factory' ? `Renders ${t.source}` : ''); };
+
+function fnIssues(f) {
+  const out = [], n = `<code>${esc(f.name)}()</code>`;
+  if (!f.title.trim()) out.push(`Add a roxygen title to ${n}`);
+  f.formals.filter(x => x.name !== '...').forEach(x => { if (!(f.params[x.name] || '').trim()) out.push(`Document <code>@param ${esc(x.name)}</code> in ${n}`); });
+  if (!f.returns.trim()) out.push(`Add <code>@return</code> to ${n}`);
+  if (!f.family.trim()) out.push(`Give ${n} a <code>@family</code> so it is grouped`);
+  return out;
+}
+function targetIssues(id) {
+  const t = S.targets[id], f = fnOf(id);
+  if (f) return fnIssues(f);
+  if (t.mode === 'expression' && !t.description.trim()) return [`Add a <code>description</code> to <code>${esc(t.name)}</code>`];
+  return [];
+}
+function allIssues() {
+  const out = [], seen = new Set();
+  topo().forEach(id => {
+    const f = fnOf(id);
+    if (f) { if (seen.has(f.name)) return; seen.add(f.name); }
+    targetIssues(id).forEach(text => out.push({ id, text }));
+  });
+  return out;
+}
+
+/* ---------- Source locations (for RStudio and the code view) ---------- */
+function srcLoc(id) {
+  const t = S.targets[id]; if (!t) return null;
+  const f = fnOf(id);
+  if (f) return { file: f.file, line: f.line, from: f.doc_line, to: f.end_line };
+  if (t.mode === 'factory' && t.source && FILES[t.source] != null) return { file: t.source, line: 1, from: 1, to: 1 };
+  const lines = (FILES['_targets.R'] || '').split('\n');
+  const re = new RegExp(`tar_\\w+\\(\\s*${t.name.replace(/\./g, '\\.')}\\b`);
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i]) || (/tar_\w+\(\s*$/.test(lines[i]) && new RegExp(`^\\s*${t.name.replace(/\./g, '\\.')}\\s*,`).test(lines[i + 1] || ''))) {
+      let end = i, depth = 0;
+      for (let j = i; j < lines.length; j++) { depth += (lines[j].match(/\(/g) || []).length - (lines[j].match(/\)/g) || []).length; end = j; if (depth <= 0) break; }
+      return { file: '_targets.R', line: i + 1, from: i + 1, to: end + 1 };
+    }
+  }
+  return FILES['_targets.R'] != null ? { file: '_targets.R', line: 1, from: 1, to: 1 } : null;
+}
+function fnLoc(name) { const f = S.fns[name]; return f && { file: f.file, line: f.line, from: f.doc_line, to: f.end_line }; }
+function openInRStudio(loc) {
+  if (!loc) return;
+  drawerTab = loc.file; hitLines = [loc.from, loc.to];
+  drawer.classList.add('open'); renderCode();
+  const first = $('#code').children[loc.from - 1];
+  if (first) setTimeout(() => { const b = $('#drawer-body'); if (b.scrollTo) b.scrollTo({ top: first.offsetTop - 30, behavior: REDUCED ? 'auto' : 'smooth' }); }, 220);
+  toast(`With the live connection this calls rstudioapi::navigateToFile("${loc.file}", line = ${loc.line}).`);
+}
+
+/* ---------- Mutations (kept in this view) ---------- */
+function canConnect(from, to) {
+  if (from === to) return "A target can't depend on itself.";
+  if (S.edges.some(e => e.from === from && e.to === to)) return `${nm(to)} already uses ${nm(from)}.`;
+  if (reaches(to, from)) return `That would create a cycle: ${nm(from)} already depends on ${nm(to)}.`;
+  const t = S.targets[to];
+  if (t.mode === 'factory') return `${nm(to)} gets its inputs from tar_read() calls in ${t.source}. Add tar_read(${nm(from)}) there.`;
+  if (t.mode === 'expression') return `${nm(to)} is a plain R expression. Use ${nm(from)} in its command to plug it in.`;
+  return '';
+}
+/* Plugging `from` into a function target passes it to a matching formal, or adds a new formal named after it. */
+function plugInto(t, f, from, depsList) {
+  const name = nm(from);
+  const free = f.formals.find(x => x.name === name && !t.args.some(a => a.name === name));
+  if (!free) {
+    // Other targets calling a shared function do not pass the new argument, so it needs a default.
+    const shared = usedBy(f.name).some(i => i !== t.id);
+    f.formals.push({ name, default: shared ? 'NULL' : null });
+    if (!f.params[name]) f.params[name] = S.targets[from].mode === 'function' ? (fnOf(from)?.returns || '') : (S.targets[from].description || '');
+  }
+  const pos = f.formals.findIndex(x => x.name === name);
+  const named = t.args.some(a => a.named) || pos !== t.args.length;
+  t.args.push({ name, value: name, kind: 'target', named, refs: [from] });
+  depsList.push(from);
+  return !free;
+}
+function unplugFrom(t, f, from, depsList) {
+  if (t.args.some(a => a.kind !== 'target' && a.refs.includes(from))) return `${nm(from)} is used inside an expression argument of ${nm(t.id)}. Change that in RStudio.`;
+  const removed = t.args.filter(a => a.kind === 'target' && a.refs[0] === from);
+  t.args = t.args.filter(a => !removed.includes(a));
+  if (f && usedBy(f.name).length <= 1) removed.forEach(a => { const x = f.formals.find(z => z.name === a.name); if (x && x.default == null) { f.formals = f.formals.filter(z => z !== x); delete f.params[a.name]; } });
+  depsList.splice(0, depsList.length, ...depsList.filter(d => d !== from));
+  return '';
+}
+function connect(from, to) {
+  const why = canConnect(from, to); if (why) return toast(why);
+  push();
+  const t = S.targets[to], f = fnOf(to), list = [];
+  const added = plugInto(t, f, from, list);
+  S.edges.push({ from, to });
+  invalidate(to); renderAll();
+  toast(added ? `Added argument ${nm(from)} to ${f.name}()${usedBy(f.name).length > 1 ? ` with default NULL, because ${usedBy(f.name).length - 1} other target(s) share it` : ''}.` : `${nm(to)} now passes ${nm(from)} to ${f.name}().`, true);
+}
+function unplug(from, to) {
+  const t = S.targets[to];
+  if (t.mode !== 'function') return toast(t.mode === 'factory' ? `Remove tar_read(${nm(from)}) from ${t.source} to unplug it.` : `Remove ${nm(from)} from the command of ${nm(to)} to unplug it.`);
+  const before = snap(), list = deps(to);
+  const why = unplugFrom(t, fnOf(to), from, list);
+  if (why) { Object.assign(S, JSON.parse(before), { sel: S.sel }); return toast(why); }
+  push(before);
+  S.edges = S.edges.filter(e => !(e.from === from && e.to === to));
+  invalidate(to); S.sel = null; renderAll();
+  toast(`Unplugged ${nm(from)} from ${nm(to)}.`, true);
+}
+function uniqueName(base, taken) { if (!taken.has(base)) return base; let i = 2; while (taken.has(`${base}_${i}`)) i++; return `${base}_${i}`; }
+function addTarget(x, y, from) {
+  const before = snap();
+  const name = uniqueName(from ? `${nm(from)}_next` : 'new_target', new Set(Object.values(S.targets).map(t => t.name)));
+  let id = name; while (S.targets[id]) id += '_';
+  const family = from ? famOf(from) : '';
+  const fn = uniqueName(`make_${name}`, new Set(Object.keys(S.fns)));
+  S.fns[fn] = { name: fn, file: `R/${slug(family)}.R`, doc_line: null, line: null, end_line: null, title: '', description: '', returns: '', family,
+    params: {}, keywords: [], formals: [], body: '', calls: [], called_by: [], isNew: true };
+  S.targets[id] = { id, name, mode: 'function', fn, type: 'stem', command: '', args: [], pattern: '', description: '', format: 'rds', status: 'new', factory: '', source: '', x, y };
+  if (from) { plugInto(S.targets[id], S.fns[fn], from, []); S.edges.push({ from, to: id }); }
+  S.sel = { type: 'node', id };
+  renderAll();
+  openModal(id, { isNew: true, before });
+}
+function removeTarget(id) {
+  push();
+  const name = nm(id);
+  downs(id).forEach(d => { const t = S.targets[d]; t.args = t.args.filter(a => !(a.kind === 'target' && a.refs[0] === id)); invalidate(d); });
+  S.edges = S.edges.filter(e => e.from !== id && e.to !== id);
+  delete S.targets[id];
+  S.sel = null; renderAll();
+  toast(`Removed ${name}.`, true);
+}
+function invalidate(id) { [id, ...closure(id, downs)].forEach(i => { const t = S.targets[i]; if (t.status === 'uptodate' || t.status === 'errored') t.status = 'outdated'; }); }
+
+/* ---------- Layout: stages left to right, one box per @family, boxes packed into rows ---------- */
+function computeLayout() {
+  const layer = stages(), order = topo(), groups = {};
+  order.forEach(id => {
+    const f = famOf(id), key = f || '\u0000' + id;
+    const g = groups[key] ||= { key, cols: {}, min: Infinity, max: -Infinity };
+    (g.cols[layer[id]] ||= []).push(id); g.min = Math.min(g.min, layer[id]); g.max = Math.max(g.max, layer[id]);
+  });
+  const G = Object.values(groups), pos = {};
+  G.forEach(g => Object.values(g.cols).forEach(c => c.forEach((id, i) => (pos[id] = i))));
+  const maxL = Math.max(0, ...Object.values(layer));
+  for (let it = 0; it < 8; it++) {
+    const down = it % 2 === 0, seq = [...Array(maxL + 1).keys()]; if (!down) seq.reverse();
+    seq.forEach(s => G.forEach(g => {
+      const c = g.cols[s]; if (!c || c.length < 2) return;
+      const sc = {}; c.forEach(id => { const n = down ? deps(id) : downs(id); sc[id] = n.length ? n.reduce((a, x) => a + pos[x], 0) / n.length : pos[id]; });
+      c.sort((a, b) => sc[a] - sc[b]); c.forEach((id, i) => (pos[id] = i));
+    }));
+  }
+  G.sort((a, b) => a.min - b.min || b.max - a.max);
+  const rows = [];
+  G.forEach(g => {
+    g.h = Math.max(...Object.values(g.cols).map(c => c.length));
+    let r = rows.find(r => r.end < g.min);
+    if (!r) { r = { end: -1, groups: [] }; rows.push(r); }
+    r.groups.push(g); r.end = g.max;
+  });
+  let y = 0; const out = {};
+  rows.forEach(r => {
+    const rh = Math.max(...r.groups.map(g => g.h));
+    r.groups.forEach(g => Object.entries(g.cols).forEach(([s, c]) => {
+      const off = (rh - c.length) * GY / 2;
+      c.forEach((id, i) => (out[id] = { x: s * GX, y: y + HEAD + off + i * GY }));
+    }));
+    y += HEAD + rh * GY + ROWGAP;
+  });
+  return out;
+}
+function groupRects() {
+  const rects = {};
+  ids().forEach(id => {
+    const f = famOf(id); if (!f) return;
+    const t = S.targets[id], h = t._h || NODE_H, r = rects[f] ||= { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    r.x0 = Math.min(r.x0, t.x - PAD); r.y0 = Math.min(r.y0, t.y - HEAD); r.x1 = Math.max(r.x1, t.x + NODE_W + PAD); r.y1 = Math.max(r.y1, t.y + h + PAD);
+  });
+  return rects;
+}
+function fitFor(posMap) {
+  const r = $('#canvas').getBoundingClientRect(), P = Object.values(posMap);
+  if (!P.length || !r.width) return { x: 40, y: 60, k: 1 };
+  const minX = Math.min(...P.map(p => p.x)) - PAD, minY = Math.min(...P.map(p => p.y)) - HEAD;
+  const maxX = Math.max(...P.map(p => p.x)) + NODE_W + PAD, maxY = Math.max(...P.map(p => p.y)) + NODE_H + PAD;
+  const padTop = r.width > 700 ? 44 : 16;
+  const k = Math.max(0.3, Math.min(1.1, (r.width - 60) / (maxX - minX), (r.height - padTop - 56) / (maxY - minY)));
+  return { k, x: (r.width - (maxX - minX) * k) / 2 - minX * k, y: padTop + (r.height - padTop - 48 - (maxY - minY) * k) / 2 - minY * k };
+}
+const currentPos = () => Object.fromEntries(ids().map(i => [i, { x: S.targets[i].x, y: S.targets[i].y }]));
+function animateTo(posMap, viewTo) {
+  const startPos = currentPos(), v0 = { ...view };
+  const apply = e => {
+    ids().forEach(i => { const a = startPos[i], b = posMap[i] || a; S.targets[i].x = a.x + (b.x - a.x) * e; S.targets[i].y = a.y + (b.y - a.y) * e; });
+    if (viewTo) view = { x: v0.x + (viewTo.x - v0.x) * e, y: v0.y + (viewTo.y - v0.y) * e, k: v0.k + (viewTo.k - v0.k) * e };
+    renderPositions(); applyView();
+  };
+  if (REDUCED) return apply(1);
+  const t0 = performance.now();
+  const step = now => { const p = Math.min(1, (now - t0) / 450); apply(1 - Math.pow(1 - p, 3)); if (p < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+function autoLayout() { const p = computeLayout(); animateTo(p, fitFor(p)); }
+function fitView() { const p = currentPos(); animateTo(p, fitFor(p)); }
+
+/* ---------- Rendering: canvas ---------- */
+const canvas = $('#canvas'), world = $('#world'), nodesEl = $('#nodes'), edgesEl = $('#edges'), groupsEl = $('#groups'), nodebar = $('#nodebar'), drawer = $('#drawer');
+function applyView() {
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
+  const g = 22 * view.k;
+  canvas.style.backgroundSize = `${g}px ${g}px`;
+  canvas.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  $('#z-val').value = Math.round(view.k * 100) + '%';
+}
+function callText(t) {
+  if (t.mode === 'function') return `${t.fn}(${t.args.map(argText).join(', ')})`;
+  if (t.mode === 'factory') return `${t.factory}("${t.source}")`;
+  const first = (t.command || '').split('\n')[0];
+  return first + ((t.command || '').includes('\n') ? ' …' : '');
+}
+function lineage() {
+  const id = (hover && S.targets[hover]) ? hover : (S.sel?.type === 'node' && S.targets[S.sel.id] ? S.sel.id : null);
+  if (!id) { canvas.classList.remove('focus-sel'); return null; }
+  canvas.classList.toggle('focus-sel', id !== hover);
+  return { id, up: closure(id, deps), dn: closure(id, downs) };
+}
+function renderNodes() {
+  const L = lineage();
+  nodesEl.innerHTML = ids().map(id => {
+    const t = S.targets[id], f = fnOf(id), n = targetIssues(id).length, sel = S.sel?.type === 'node' && S.sel.id === id;
+    const dim = L && !(id === L.id || L.up.has(id) || L.dn.has(id)), title = titleOf(id), shared = f ? usedBy(f.name).length : 0;
+    const chips = [
+      f ? `<span class="chip">${esc(f.file)}</span>` : t.mode === 'factory' ? `<span class="chip">${esc(t.source)}</span>` : '<span class="chip">expression</span>',
+      shared > 1 ? `<span class="chip" title="${esc(f.name)}() is used by ${shared} targets">shared ×${shared}</span>` : '',
+      t.format !== 'rds' ? `<span class="chip">${esc(t.format)}</span>` : '',
+      t.pattern ? `<span class="chip">${esc(t.pattern)}</span>` : '',
+      n ? `<span class="chip warn">${n} to document</span>` : '',
+    ].join('');
+    return `<div class="node ${famClass(famOf(id))} status-${t.status}${sel ? ' sel' : ''}${dim ? ' dim' : ''}" data-id="${esc(id)}" style="transform:translate(${t.x}px,${t.y}px)">
+      <span class="port port-in" title="Inputs plug in here"></span>
+      <span class="port port-out" data-port="${esc(id)}" title="Drag to plug ${esc(t.name)} into another target"></span>
+      <div class="n-top"><span class="n-name">${esc(t.name)}</span><span class="n-status" title="${STATUS[t.status] || t.status}"></span></div>
+      <div class="n-call">${esc(callText(t))}</div>
+      <div class="n-title${title ? '' : ' empty'}">${esc(title || 'No roxygen title yet')}</div>
+      <div class="n-foot">${chips}</div>
+    </div>`;
+  }).join('');
+  nodesEl.querySelectorAll('.node').forEach(el => { const t = S.targets[el.dataset.id]; if (t) t._h = el.offsetHeight; });
+  $('#canvas-empty').hidden = ids().length > 0;
+  renderGroups(); renderNodebar();
+}
+function renderGroups(dropFam) {
+  const rects = groupRects();
+  groupsEl.innerHTML = families().filter(f => rects[f]).map(f => {
+    const r = rects[f], nFn = Object.values(S.fns).filter(x => x.family === f && usedBy(x.name).length).length;
+    return `<div class="group ${famClass(f)}${dropFam === f ? ' drop' : ''}" data-fam="${esc(f)}" style="transform:translate(${r.x0}px,${r.y0}px);width:${r.x1 - r.x0}px;height:${r.y1 - r.y0}px">
+      <span class="g-label" data-gdrag="${esc(f)}" title="Drag to move the whole family"><code>@family</code>${esc(f)}<small>${nFn} fn</small></span></div>`;
+  }).join('');
+}
+function renderNodebar() {
+  const id = S.sel?.type === 'node' ? S.sel.id : null, t = id && S.targets[id];
+  nodebar.hidden = !t || !!drag;
+  if (!t) return;
+  nodebar.style.transform = `translate(${t.x}px, ${t.y - 40}px)`;
+  nodebar.querySelector('[data-act="rstudio"]').hidden = !srcLoc(id) || (fnOf(id)?.isNew);
+}
+function renderPositions() {
+  nodesEl.querySelectorAll('.node').forEach(el => { const t = S.targets[el.dataset.id]; if (t) el.style.transform = `translate(${t.x}px,${t.y}px)`; });
+  renderEdges(); renderGroups(); renderNodebar();
+}
+function geom(e) {
+  const a = S.targets[e.from], b = S.targets[e.to];
+  const x1 = a.x + NODE_W, y1 = a.y + PORT_Y, x2 = b.x, y2 = b.y + PORT_Y;
+  const dx = Math.max(50, Math.abs(x2 - x1) * 0.5);
+  return { x1, y1, x2, y2, c1x: x1 + dx, c2x: x2 - dx };
+}
+let tempPath = '';
+function renderEdges() {
+  const L = lineage(); let html = '';
+  S.edges.forEach(e => {
+    if (!S.targets[e.from] || !S.targets[e.to]) return;
+    const g = geom(e), d = `M${g.x1},${g.y1} C${g.c1x},${g.y1} ${g.c2x},${g.y2} ${g.x2},${g.y2}`;
+    const eid = edgeId(e), sel = S.sel?.type === 'edge' && S.sel.id === eid;
+    let cls = '';
+    if (L) { const on = ((e.to === L.id || L.up.has(e.to)) && L.up.has(e.from)) || ((e.from === L.id || L.dn.has(e.from)) && L.dn.has(e.to)); cls = on ? ' hl' : ' dim'; }
+    const arg = S.targets[e.to].args.find(a => a.refs.includes(e.from));
+    const tip = `${nm(e.from)} → ${nm(e.to)}${arg ? ` (argument ${arg.name} of ${S.targets[e.to].fn}())` : ''}`;
+    html += `<g class="edge-g${sel ? ' sel' : ''}${cls}"><path class="edge" d="${d}"/><path class="edge-hit" d="${d}" data-edge="${esc(eid)}"><title>${esc(tip)}</title></path>`;
+    if (sel) {
+      const mx = (g.x1 + 3 * g.c1x + 3 * g.c2x + g.x2) / 8, my = (g.y1 + g.y2) / 2;
+      html += `<g class="edge-del" data-del="${esc(eid)}" transform="translate(${mx},${my})"><circle r="10"/><path d="M-4,-4 L4,4 M4,-4 L-4,4"/><title>Unplug ${esc(nm(e.from))} from ${esc(nm(e.to))}</title></g>`;
+    }
+    html += '</g>';
+  });
+  if (tempPath) html += `<path class="edge-temp" d="${tempPath}"/>`;
+  edgesEl.innerHTML = html;
+}
+function applyHover() {
+  const L = lineage();
+  nodesEl.querySelectorAll('.node').forEach(n => n.classList.toggle('dim', !!L && !(n.dataset.id === L.id || L.up.has(n.dataset.id) || L.dn.has(n.dataset.id))));
+  renderEdges();
+}
+function select(sel, center) {
+  S.sel = sel;
+  nodesEl.querySelectorAll('.node').forEach(n => n.classList.toggle('sel', sel?.type === 'node' && n.dataset.id === sel.id));
+  applyHover(); renderNodebar(); renderSidebar();
+  if (center && sel?.type === 'node') {
+    const t = S.targets[sel.id], r = canvas.getBoundingClientRect();
+    animateTo(currentPos(), { k: view.k, x: r.width / 2 - (t.x + NODE_W / 2) * view.k, y: r.height / 2 - (t.y + NODE_H / 2) * view.k });
+  }
+}
+
+/* ---------- Rendering: sidebar ---------- */
+function renderSidebar() {
+  const issues = allIssues(), layer = stages(), nStages = ids().length ? new Set(Object.values(layer)).size : 0;
+  $('#stats').innerHTML = `
+    <div class="stat"><b>${ids().length}</b><span>targets</span></div>
+    <div class="stat"><b>${S.edges.length}</b><span>links</span></div>
+    <div class="stat"><b>${nStages}</b><span>stages</span></div>
+    <div class="stat${issues.length ? ' warn' : ''}"><b>${issues.length}</b><span>to fix</span></div>`;
+  const byFam = {}; topo().forEach(id => (byFam[famOf(id)] ||= []).push(id));
+  const order = [...families(), ...(byFam[''] ? [''] : [])];
+  $('#fams').innerHTML = order.map(f => `<div class="fam ${famClass(f)}">
+      <div class="fam-head"><span class="sw"></span>${f ? esc(f) : '<span style="color:var(--muted)">No @family</span>'}</div>
+      ${byFam[f].map(id => { const t = S.targets[id], n = targetIssues(id).length; return `<button class="t-item status-${t.status}${S.sel?.type === 'node' && S.sel.id === id ? ' sel' : ''}" data-goto="${esc(id)}" title="${esc(callText(t))}"><span class="st"></span><span class="nm">${esc(t.name)}</span>${n ? `<span class="badge">${n}</span>` : ''}</button>`; }).join('')}
+    </div>`).join('') || '<p class="help">No targets yet.</p>';
+  const helpers = Object.values(S.fns).filter(f => !usedBy(f.name).length && !f.isNew);
+  $('#helpers-section').hidden = !helpers.length;
+  $('#helpers').innerHTML = helpers.map(f => `<button class="helper" data-fnloc="${esc(f.name)}" title="Show ${esc(f.name)}() in ${esc(f.file)}"><b>${esc(f.name)}()</b><span>${f.called_by.length ? 'used by ' + f.called_by.map(esc).join(', ') : 'not used by any target'} · ${esc(f.file)}</span></button>`).join('');
+  $('#checks').innerHTML = issues.length
+    ? issues.map(i => `<button class="check" data-goto="${esc(i.id)}" data-open="1"><span class="sym">!</span><span>${i.text}</span></button>`).join('')
+    : '<p class="all-good">Every function is fully documented.</p>';
+}
+
+/* ---------- Code: source files and previews ---------- */
+function wrap(text, width = 76) {
+  return text.split('\n').flatMap(par => { const out = []; let line = ''; par.split(/\s+/).forEach(w => { if (line && (line + ' ' + w).length > width) { out.push(line); line = w; } else line = line ? line + ' ' + w : w; }); out.push(line); return out; });
+}
+function roxygenFor(f) {
+  const L = [], add = s => wrap(s).forEach(x => L.push(("#' " + x).trimEnd()));
+  add(f.title || 'TODO: one-line title');
+  L.push("#'");
+  if (f.description) { f.description.split(/\n\n+/).forEach(p => { add(p); L.push("#'"); }); }
+  f.formals.forEach(x => add(`@param ${x.name} ${f.params[x.name] || 'TODO: describe this argument.'}`));
+  add(`@return ${f.returns || 'TODO: describe the result.'}`);
+  if (f.family) add(`@family ${f.family}`);
+  f.keywords.forEach(k => add(`@keywords ${k}`));
+  return L.join('\n');
+}
+const indent = (s, n) => s.split('\n').map(l => (l ? ' '.repeat(n) + l : l)).join('\n');
+const signatureFor = f => `${f.name || 'unnamed'} <- function(${f.formals.map(x => x.default != null ? `${x.name} = ${x.default}` : x.name).join(', ')}) {`;
+const fnBlock = f => `${roxygenFor(f)}\n${signatureFor(f)}\n${indent(f.body || '# TODO', 2)}\n}`;
+function tarCall(t, fnName) {
+  const opts = [];
+  const cmd = t.mode === 'function' ? `${fnName}(${t.args.map(argText).join(', ')})` : t.command;
+  if (t.format !== 'rds') opts.push(`format = "${t.format}"`);
+  if (t.pattern) opts.push(`pattern = ${t.pattern}`);
+  if (t.mode === 'expression' && t.description) opts.push(`description = "${t.description.replace(/"/g, '\\"')}"`);
+  const one = `tar_target(${t.name}, ${cmd}${opts.length ? ', ' + opts.join(', ') : ''})`;
+  return one.length <= 76 && !cmd.includes('\n') ? one : `tar_target(\n  ${t.name},\n${indent(cmd, 2)}${opts.length ? ',\n  ' + opts.join(',\n  ') : ''}\n)`;
+}
+function hlLine(line) {
+  if (/^\s*#'/.test(line)) return `<span class="c-rox">${esc(line).replace(/(@\w+)/g, '<span class="c-tag">$1</span>')}</span>`;
+  const re = /("(?:[^"\\]|\\.)*")|(#.*$)|\b(function|library|list|TRUE|FALSE|NULL)\b|\b(tar_\w+)\b|(\|>|<-)/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(line))) {
+    out += esc(line.slice(last, m.index));
+    out += `<span class="${m[1] ? 'c-str' : m[2] ? 'c-com' : m[3] ? 'c-kw' : m[4] ? 'c-fn' : 'c-op'}">${esc(m[0])}</span>`; last = re.lastIndex;
+  }
+  return out + esc(line.slice(last));
+}
+const hl = code => code.split('\n').map(hlLine).join('\n');
+function renderCode() {
+  const fs = Object.keys(FILES); if (!fs.includes(drawerTab)) drawerTab = fs[0];
+  $('#tabs').innerHTML = fs.map(f => `<button class="tab" role="tab" data-tab="${esc(f)}" aria-selected="${f === drawerTab}">${esc(f)}</button>`).join('')
+    + `<div class="spacer"></div><span class="help hide-narrow">As read from disk</span><button class="btn small ghost" id="btn-copy">Copy</button><button class="btn small" id="btn-drawer">${drawer.classList.contains('open') ? 'Hide code' : 'Show code'}</button>`;
+  const text = FILES[drawerTab] || '';
+  $('#code').innerHTML = text.split('\n').map((l, i) => `<span class="ln${hitLines && i + 1 >= hitLines[0] && i + 1 <= hitLines[1] ? ' hit' : ''}">${hlLine(l) || ' '}</span>`).join('');
+}
+
+/* ---------- Modal editor ---------- */
+const overlay = $('#overlay'), modal = $('#modal');
+let M = null; // { id, t, f, deps, isNew, before, lastFocus }
+function openModal(id, opts = {}) {
+  const t = S.targets[id]; if (!t) return;
+  const f = fnOf(id);
+  M = { id, t: JSON.parse(JSON.stringify(t)), f: f ? JSON.parse(JSON.stringify(f)) : null, deps: deps(id), isNew: !!opts.isNew, before: opts.before, lastFocus: document.activeElement };
+  renderModal(); overlay.hidden = false;
+  setTimeout(() => { if (!M) return; const el = M.isNew ? $('#m-name') : ($('#m-title') || $('#m-desc')); if (el) { el.focus(); if (M.isNew) el.select(); } }, 20);
+}
+function closeModal(saved) {
+  if (!M) return;
+  if (!saved && M.isNew) { Object.assign(S, JSON.parse(M.before)); S.sel = null; renderAll(); }
+  overlay.hidden = true; modal.innerHTML = ''; const lf = M.lastFocus; M = null;
+  if (lf && lf.focus && document.contains(lf)) lf.focus();
+}
+function argSource(t, formal) {
+  const a = t.args.find(x => x.name === formal.name);
+  if (a?.kind === 'target') return `<span>${esc(t.name)} passes</span><button class="tgt" data-goto="${esc(a.refs[0])}" title="Go to ${esc(nm(a.refs[0]))}">${esc(nm(a.refs[0]))}</button>`;
+  if (a) return `<span>${esc(t.name)} passes</span><code>${esc(a.value)}</code>`;
+  if (formal.default != null) return `<span>Not passed. Default:</span><code>${esc(formal.default)}</code>`;
+  return '<span>Not passed and no default</span>';
+}
+function renderModal() {
+  const t = M.t, f = M.f, loc = srcLoc(M.id), fam = f ? f.family : famOf(M.id);
+  const others = f ? usedBy(f.name).filter(x => x !== M.id) : [];
+  const cands = ids().filter(c => c !== M.id && !M.deps.includes(c) && !reaches(M.id, c));
+  const depList = `<div class="deps">${M.deps.map(d => `<span class="dep">${esc(nm(d))}${t.mode === 'function' ? `<button data-unplug="${esc(d)}" title="Unplug ${esc(nm(d))}" aria-label="Unplug ${esc(nm(d))}">✕</button>` : ''}</span>`).join('') || '<span class="help">None</span>'}</div>`;
+  modal.innerHTML = `
+    <header class="m-head ${famClass(fam)} status-${t.status}">
+      <div class="m-row">
+        <span class="m-kicker">${f ? (fam ? `@family ${esc(fam)}` : 'No @family') : t.mode === 'factory' ? `Target factory · ${esc(t.factory)}()` : 'Expression target'}</span>
+        <span class="pill">${STATUS[t.status] || esc(t.status)}</span>
+        <span class="spacer"></span>
+        ${loc && !(f && f.isNew) ? `<span class="loc">${esc(loc.file)}:${loc.line}</span><button class="btn small" data-m="rstudio">Open in RStudio</button>` : ''}
+        <button class="btn small ghost" data-m="cancel" aria-label="Close">✕</button>
+      </div>
+      <div class="m-row"><input class="m-name" id="m-name" data-tf="name" value="${esc(t.name)}" aria-label="Target name" spellcheck="false" autocomplete="off"></div>
+      <span class="err-msg" id="m-err" hidden></span>
+    </header>
+    <div class="m-body">
+      <div class="m-col">${f ? `
+        <h3>Documentation <small>roxygen block of <code>${esc(f.name)}()</code></small></h3>
+        ${others.length ? `<div class="notice"><code>${esc(f.name)}()</code> is also used by ${others.map(o => `<code>${esc(nm(o))}</code>`).join(', ')}. Documentation and body changes apply to all of them.</div>` : ''}
+        <div class="field"><label for="m-title">Title <code>#' first line</code></label>
+          <input class="inp" id="m-title" data-ff="title" value="${esc(f.title)}" placeholder="e.g. Clean and deduplicate responses"></div>
+        <div class="field"><label for="m-desc">Description</label>
+          <textarea class="txt" id="m-desc" data-ff="description" rows="3" placeholder="Why this step exists and what it changes">${esc(f.description)}</textarea></div>
+        <div class="field"><span class="lbl">Arguments <code>@param</code></span>
+          ${f.formals.length ? f.formals.map(x => `<div class="argrow"><span class="pn">${esc(x.name)}</span>
+            <div class="src">${argSource(t, x)}</div>
+            <textarea class="txt" rows="1" data-p="${esc(x.name)}" aria-label="Describe argument ${esc(x.name)}" placeholder="What is ${esc(x.name)}?">${esc(f.params[x.name] || '')}</textarea></div>`).join('') : '<p class="help">No arguments. Plug in an input to add one.</p>'}
+        </div>
+        <div class="field"><label for="m-returns">Returns <code>@return</code></label>
+          <textarea class="txt" id="m-returns" data-ff="returns" rows="2" placeholder="e.g. A tibble of valid, unique responses.">${esc(f.returns)}</textarea></div>
+        <div class="grid2">
+          <div class="field"><label for="m-family">Group <code>@family</code></label>
+            <input class="inp" id="m-family" data-ff="family" list="fam-list" value="${esc(f.family)}" placeholder="e.g. Data import" autocomplete="off">
+            <datalist id="fam-list">${families().map(x => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
+          <div class="field"><label for="m-file">Source file</label>
+            <input class="inp mono" id="m-file" data-ff="file" value="${esc(f.file)}" spellcheck="false" autocomplete="off" ${f.isNew ? '' : 'readonly title="Moving functions between files is not supported yet"'}></div>
+        </div>` : `
+        <h3>Documentation <small>${t.mode === 'factory' ? 'targets created by a factory have no roxygen block' : 'stored in <code>tar_target(description = )</code>'}</small></h3>
+        <div class="field"><label for="m-desc">Description</label>
+          <textarea class="txt" id="m-desc" data-tf="description" rows="3">${esc(t.description)}</textarea></div>
+        <p class="help">${t.mode === 'factory' ? `Its inputs come from <code>tar_read()</code> calls in <code>${esc(t.source)}</code>.` : 'It is shown in the box of the family that uses it.'}</p>`}
+      </div>
+      <div class="m-col">${f ? `
+        <h3>Function</h3>
+        <div class="field"><label for="m-fn">Function name</label><input class="inp mono" id="m-fn" data-ff="name" value="${esc(f.name)}" spellcheck="false" autocomplete="off"></div>
+        <div><div class="sig" id="m-sig"></div>
+          <textarea class="txt body-txt" id="m-body" data-ff="body" rows="${Math.max(5, f.body.split('\n').length + 1)}" spellcheck="false" aria-label="Function body">${esc(f.body)}</textarea>
+          <div class="sig end">}</div></div>
+        <div class="field"><span class="lbl">Inputs of ${esc(t.name)}</span>${depList}
+          ${cands.length ? `<select class="select" id="m-plug" aria-label="Plug in an input"><option value="">+ Plug in an input…</option>${cands.map(c => `<option value="${esc(c)}">${esc(nm(c))}</option>`).join('')}</select>` : ''}</div>` : `
+        <h3>Command</h3>
+        <pre class="plain">${hl(t.command || '')}</pre>
+        <div class="field"><span class="lbl">Inputs</span>${depList}</div>`}
+        <div class="grid2">
+          <div class="field"><label for="m-format">Storage <code>format</code></label><select class="select" id="m-format" data-tf="format" ${t.mode === 'factory' ? 'disabled' : ''}>${FORMATS.map(x => `<option${x === t.format ? ' selected' : ''}>${x}</option>`).join('')}</select></div>
+          <div class="field"><label for="m-pattern">Branching <code>pattern</code></label><input class="inp mono" id="m-pattern" data-tf="pattern" value="${esc(t.pattern)}" placeholder="map(regions)" spellcheck="false" autocomplete="off" ${t.mode === 'factory' ? 'disabled' : ''}></div>
+        </div>
+        <div class="field"><span class="lbl">What would be written</span><pre class="plain" id="m-preview"></pre></div>
+        <div class="issues" id="m-issues"></div>
+      </div>
+    </div>
+    <footer class="m-foot">
+      ${M.isNew ? '' : '<button class="btn danger" data-m="remove">Remove target</button>'}
+      <span class="spacer"></span>
+      <span class="help hide-narrow">Writing to files comes with the live connection</span>
+      <button class="btn" data-m="cancel">Cancel</button>
+      <button class="btn primary" data-m="save">Apply</button>
+    </footer>`;
+  refreshModal();
+  modal.querySelectorAll('textarea[data-p]').forEach(autoGrow);
+}
+function refreshModal() {
+  const t = M.t, f = M.f, sig = $('#m-sig');
+  if (sig) sig.innerHTML = hl(signatureFor(f));
+  $('#m-preview').innerHTML = hl(f ? `# ${f.file}\n${fnBlock(f)}\n\n# _targets.R\n${tarCall(t, f.name)}` : t.mode === 'factory' ? `# _targets.R\n${t.factory}(${t.name}, "${t.source}")` : `# _targets.R\n${tarCall(t)}`);
+  const issues = f ? fnIssues(f) : (t.mode === 'expression' && !t.description.trim() ? ['Add a <code>description</code>'] : []);
+  $('#m-issues').innerHTML = issues.map(i => `<div class="issue">${i}</div>`).join('');
+}
+function nameError(v, kind, selfName) {
+  if (!v) return `The ${kind} needs a name.`;
+  if (!validName(v)) return `Use letters, digits, dots and underscores for the ${kind} name, starting with a letter.`;
+  if (kind === 'target' && Object.values(S.targets).some(o => o.id !== M.id && o.name === v)) return `${v} is already used by another target.`;
+  if (kind === 'function' && v !== selfName && S.fns[v]) return `${v}() already exists in ${S.fns[v].file}.`;
+  return '';
+}
+function saveModal() {
+  const t = M.t, f = M.f, orig = fnOf(M.id);
+  const err = nameError(t.name.trim(), 'target') || (f ? nameError(f.name.trim(), 'function', orig.name) : '');
+  const box = $('#m-err'); box.hidden = !err; box.textContent = err;
+  if (err) return;
+  push(M.isNew ? M.before : snap());
+  t.name = t.name.trim();
+  const cur = S.targets[M.id];
+  let famChanged = false, codeChanged = false;
+  if (f) {
+    f.name = f.name.trim(); f.family = f.family.trim();
+    famChanged = f.family !== orig.family;
+    codeChanged = f.body !== orig.body || JSON.stringify(f.formals) !== JSON.stringify(orig.formals) || JSON.stringify(t.args) !== JSON.stringify(cur.args);
+    Object.keys(f.params).forEach(k => { if (!f.formals.some(x => x.name === k)) delete f.params[k]; });
+    if (f.name !== orig.name) { delete S.fns[orig.name]; usedBy(orig.name).forEach(i => { S.targets[i].fn = f.name; }); t.fn = f.name; }
+    S.fns[f.name] = f;
+    if (codeChanged) usedBy(f.name).forEach(invalidate);
+  }
+  const { x, y, _h } = cur; Object.assign(cur, t, { x, y, _h });
+  S.edges = S.edges.filter(e => e.to !== M.id).concat(M.deps.map(from => ({ from, to: M.id })));
+  if (codeChanged || cur.pattern !== t.pattern) invalidate(M.id);
+  const wasNew = M.isNew;
+  closeModal(true);
+  renderAll();
+  if (famChanged || wasNew) autoLayout();
+  toast(wasNew ? `Added ${t.name}. It exists only in this view until writing to files is implemented.` : 'Applied in this view. Your files are unchanged.', true);
+}
+function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px'; }
+
+modal.addEventListener('input', e => {
+  const el = e.target;
+  if (el.dataset.p) { M.f.params[el.dataset.p] = el.value; autoGrow(el); return refreshModal(); }
+  if (el.dataset.ff) {
+    M.f[el.dataset.ff] = el.value;
+    if (el.dataset.ff === 'family' && M.f.isNew) { M.f.file = `R/${slug(el.value.trim())}.R`; const fe = $('#m-file'); if (fe) fe.value = M.f.file; }
+    return refreshModal();
+  }
+  if (el.dataset.tf) {
+    M.t[el.dataset.tf] = el.value;
+    if (el.dataset.tf === 'name') {
+      const msg = nameError(el.value.trim(), 'target'); el.classList.toggle('invalid', !!msg);
+      const box = $('#m-err'); box.hidden = !msg; box.textContent = msg;
+      if (M.f?.isNew && !$('#m-fn').dataset.touched) { M.f.name = `make_${el.value.trim()}`; $('#m-fn').value = M.f.name; }
+    }
+    refreshModal();
+  }
+});
+modal.addEventListener('focusin', e => { if (e.target.id === 'm-fn') e.target.dataset.touched = '1'; });
+modal.addEventListener('change', e => {
+  if (e.target.id !== 'm-plug' || !e.target.value) return;
+  plugInto(M.t, M.f, e.target.value, M.deps);
+  renderModal();
+});
+modal.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.unplug) { const why = unplugFrom(M.t, M.f, b.dataset.unplug, M.deps); if (why) toast(why); return renderModal(); }
+  if (b.dataset.goto) { const id = b.dataset.goto; closeModal(false); select({ type: 'node', id }, true); return; }
+  const a = b.dataset.m;
+  if (a === 'cancel') closeModal(false);
+  else if (a === 'save') saveModal();
+  else if (a === 'remove') { const id = M.id; closeModal(true); removeTarget(id); }
+  else if (a === 'rstudio') { const loc = srcLoc(M.id); closeModal(false); openInRStudio(loc); }
+});
+overlay.addEventListener('pointerdown', e => { if (e.target === overlay) closeModal(false); });
+
+/* ---------- Render all ---------- */
+function renderAll() { renderNodes(); renderEdges(); renderSidebar(); renderCode(); }
+
+document.querySelector('.sidebar').addEventListener('click', e => {
+  const h = e.target.closest('[data-fnloc]'); if (h) return openInRStudio(fnLoc(h.dataset.fnloc));
+  const b = e.target.closest('[data-goto]'); if (!b) return;
+  select({ type: 'node', id: b.dataset.goto }, true);
+  if (b.dataset.open) openModal(b.dataset.goto);
+});
+
+/* ---------- Canvas interaction ---------- */
+const toWorld = (cx, cy) => { const r = canvas.getBoundingClientRect(); return { x: (cx - r.left - view.x) / view.k, y: (cy - r.top - view.y) / view.k }; };
+let drag = null, dropEl = null;
+const moved = (e, d) => Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3;
+function famAtPoint(p, exclude, rects) {
+  return Object.entries(rects).find(([f, r]) => f !== exclude && p.x > r.x0 && p.x < r.x1 && p.y > r.y0 && p.y < r.y1)?.[0] || null;
+}
+canvas.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || e.target.closest('.zoombar, #nodebar')) return;
+  const port = e.target.closest('.port-out'), node = e.target.closest('.node'), del = e.target.closest('[data-del]'), hit = e.target.closest('.edge-hit'), glabel = e.target.closest('[data-gdrag]');
+  if (del) { const ed = edgeById(del.dataset.del); if (ed) unplug(ed.from, ed.to); return; }
+  if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+  const w = toWorld(e.clientX, e.clientY);
+  if (port) { drag = { type: 'connect', from: port.dataset.port }; renderNodebar(); return; }
+  if (node) {
+    const t = S.targets[node.dataset.id];
+    drag = { type: 'node', id: t.id, ox: w.x - t.x, oy: w.y - t.y, sx: e.clientX, sy: e.clientY, moved: false, rects: groupRects(), el: node };
+    return;
+  }
+  if (glabel) {
+    const f = glabel.dataset.gdrag, members = ids().filter(i => famOf(i) === f);
+    drag = { type: 'group', members, start: Object.fromEntries(members.map(i => [i, { x: S.targets[i].x, y: S.targets[i].y }])), wx: w.x, wy: w.y, sx: e.clientX, sy: e.clientY };
+    return;
+  }
+  if (hit) { drag = null; select({ type: 'edge', id: hit.dataset.edge }); return; }
+  drag = { type: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y, moved: false };
+  canvas.classList.add('panning');
+});
+canvas.addEventListener('pointermove', e => {
+  if (!drag) {
+    const n = e.target.closest('.node'), h = n ? n.dataset.id : null;
+    if (h !== hover) { hover = h; applyHover(); }
+    return;
+  }
+  if (drag.type === 'pan') {
+    drag.moved ||= moved(e, drag);
+    view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; applyView();
+  } else if (drag.type === 'node') {
+    if (!drag.moved && !moved(e, drag)) return;
+    if (!drag.moved) { drag.moved = true; drag.el.classList.add('dragging'); hover = null; applyHover(); nodebar.hidden = true; }
+    const w = toWorld(e.clientX, e.clientY), t = S.targets[drag.id];
+    t.x = w.x - drag.ox; t.y = w.y - drag.oy;
+    drag.el.style.transform = `translate(${t.x}px,${t.y}px)`;
+    renderEdges();
+    const f = fnOf(drag.id);
+    drag.target = f ? famAtPoint({ x: t.x + NODE_W / 2, y: t.y + 20 }, f.family, drag.rects) : null;
+    renderGroups(drag.target);
+  } else if (drag.type === 'group') {
+    const w = toWorld(e.clientX, e.clientY), dx = w.x - drag.wx, dy = w.y - drag.wy;
+    drag.members.forEach(i => { S.targets[i].x = drag.start[i].x + dx; S.targets[i].y = drag.start[i].y + dy; });
+    renderPositions();
+  } else if (drag.type === 'connect') {
+    const a = S.targets[drag.from], w = toWorld(e.clientX, e.clientY);
+    const x1 = a.x + NODE_W, y1 = a.y + PORT_Y, dx = Math.max(50, Math.abs(w.x - x1) * 0.5);
+    tempPath = `M${x1},${y1} C${x1 + dx},${y1} ${w.x - dx},${w.y} ${w.x},${w.y}`;
+    renderEdges();
+    const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.node');
+    if (dropEl && dropEl !== over) dropEl.classList.remove('drop-ok', 'drop-bad');
+    dropEl = over;
+    if (over) { const bad = !!canConnect(drag.from, over.dataset.id); over.classList.toggle('drop-ok', !bad); over.classList.toggle('drop-bad', bad); }
+  }
+});
+canvas.addEventListener('pointerup', e => {
+  if (!drag) return;
+  const d = drag; drag = null; canvas.classList.remove('panning');
+  if (d.type === 'pan') { if (!d.moved && S.sel) select(null); }
+  else if (d.type === 'node') {
+    d.el.classList.remove('dragging');
+    if (!d.moved) return select({ type: 'node', id: d.id });
+    if (d.target) {
+      push();
+      const f = fnOf(d.id), old = f.family, shared = usedBy(f.name).length;
+      f.family = d.target; usedBy(f.name).forEach(invalidate);
+      renderAll(); autoLayout();
+      toast(`${f.name}() moved from ${old ? '@family ' + old : 'no family'} to @family ${d.target}${shared > 1 ? ` (with all ${shared} targets that use it)` : ''}.`, true);
+    } else { renderGroups(); renderNodebar(); }
+  } else if (d.type === 'connect') {
+    tempPath = ''; if (dropEl) dropEl.classList.remove('drop-ok', 'drop-bad'); dropEl = null;
+    const over = document.elementFromPoint(e.clientX, e.clientY), node = over?.closest('.node');
+    renderEdges(); renderNodebar();
+    if (node) connect(d.from, node.dataset.id);
+    else if (over && canvas.contains(over) && !over.closest('.zoombar')) { const w = toWorld(e.clientX, e.clientY); addTarget(w.x, w.y - PORT_Y, d.from); }
+  }
+});
+canvas.addEventListener('pointerleave', () => { if (!drag && hover) { hover = null; applyHover(); } });
+canvas.addEventListener('dblclick', e => {
+  if (e.target.closest('.zoombar, #nodebar, .edge-hit, .g-label')) return;
+  const node = e.target.closest('.node');
+  if (node) return openModal(node.dataset.id);
+  const w = toWorld(e.clientX, e.clientY); addTarget(w.x - NODE_W / 2, w.y - 30);
+});
+nodebar.addEventListener('click', e => {
+  const b = e.target.closest('button'), id = S.sel?.id; if (!b || !id) return;
+  if (b.dataset.act === 'edit') openModal(id);
+  else if (b.dataset.act === 'rstudio') openInRStudio(srcLoc(id));
+  else if (b.dataset.act === 'remove') removeTarget(id);
+});
+function zoomAt(f, cx, cy) {
+  const k = Math.min(2, Math.max(0.25, view.k * f)), r = canvas.getBoundingClientRect();
+  const px = (cx ?? r.left + r.width / 2) - r.left, py = (cy ?? r.top + r.height / 2) - r.top;
+  view.x = px - (px - view.x) * (k / view.k); view.y = py - (py - view.y) * (k / view.k); view.k = k; applyView();
+}
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey || e.deltaMode !== 0) zoomAt(Math.exp(-(e.deltaMode ? e.deltaY * 33 : e.deltaY) * 0.0025), e.clientX, e.clientY);
+  else { view.x -= e.deltaX; view.y -= e.deltaY; applyView(); }
+}, { passive: false });
+$('#z-in').onclick = () => zoomAt(1.2);
+$('#z-out').onclick = () => zoomAt(1 / 1.2);
+$('#z-fit').onclick = fitView;
+
+/* ---------- Toolbar, drawer, keys ---------- */
+$('#btn-add').onclick = () => { const r = canvas.getBoundingClientRect(), w = toWorld(r.left + r.width / 2, r.top + r.height / 2); addTarget(w.x - NODE_W / 2, w.y - NODE_H / 2); };
+$('#btn-layout').onclick = autoLayout;
+$('#btn-undo').onclick = undo;
+$('#btn-reset').onclick = () => {
+  if (!undoStack.length) return toast('Nothing to discard. The view matches your files.');
+  push(); const keep = currentPos(); S = fromModel(RAW); Object.entries(keep).forEach(([i, p]) => { if (S.targets[i]) Object.assign(S.targets[i], p); });
+  renderAll(); autoLayout(); toast('Back to what is in your files.', true);
+};
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.tab) { drawerTab = b.dataset.tab; hitLines = null; drawer.classList.add('open'); return renderCode(); }
+  if (b.id === 'btn-drawer') { drawer.classList.toggle('open'); return renderCode(); }
+  if (b.id === 'btn-copy') {
+    const text = FILES[drawerTab] || '';
+    const fallback = () => { const r = document.createRange(); r.selectNodeContents($('#code')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Code selected. Press Ctrl/Cmd+C to copy.'); };
+    drawer.classList.add('open'); renderCode();
+    try { navigator.clipboard.writeText(text).then(() => toast(`Copied ${drawerTab}.`), fallback); } catch { fallback(); }
+  }
+});
+document.addEventListener('keydown', e => {
+  if (M) {
+    if (e.key === 'Escape') { e.preventDefault(); closeModal(false); }
+    else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveModal(); }
+    return;
+  }
+  const typing = e.target.matches('input, textarea, select, [contenteditable]');
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); return undo(); }
+  if (typing) return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel) {
+    e.preventDefault();
+    if (S.sel.type === 'node') removeTarget(S.sel.id);
+    else { const ed = edgeById(S.sel.id); if (ed) unplug(ed.from, ed.to); }
+  } else if (e.key === 'Enter' && S.sel?.type === 'node') openModal(S.sel.id);
+  else if (e.key === 'Escape') select(null);
+  else if (e.key.toLowerCase() === 'l' && !e.metaKey && !e.ctrlKey) autoLayout();
+  else if (e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey) $('#btn-add').click();
+});
+
+/* ---------- Toast ---------- */
+let toastTimer;
+function toast(msg, withUndo) {
+  const el = $('#toast'), act = $('#toast-act');
+  $('#toast-msg').innerHTML = esc(msg).replace(/(rstudioapi::\S+?\))/g, '<code>$1</code>');
+  act.hidden = !withUndo;
+  act.onclick = () => { undo(); el.classList.remove('show'); };
+  el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 4600);
+}
+
+/* ---------- Boot ---------- */
+const readAt = RAW.read_at ? new Date(RAW.read_at.replace(/([+-]\d\d)(\d\d)$/, '$1:$2')) : null;
+$('#session').innerHTML = `<code>${esc(RAW.project)}</code> · read ${readAt && !isNaN(readAt) ? readAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'from disk'} · run <code>pipeworks()</code> again to refresh`;
+updateDirty();
+renderAll();
+const p0 = computeLayout(); ids().forEach(i => Object.assign(S.targets[i], p0[i]));
+renderPositions(); view = fitFor(p0); applyView();
+let resizeT; addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { view = fitFor(currentPos()); applyView(); }, 200); });
+})();
+</script>
