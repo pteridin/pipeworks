@@ -59,8 +59,9 @@ build_source <- function(texts, read_extra) {
 
 # Cross-file step: function calls, map templates and factory source files.
 # `parsed` is a list of `parse_source_file()` results (one per code file), so
-# per-file parses can be cached and reused (see `last_authors()`).
-resolve_source <- function(parsed, files, read_extra) {
+# per-file parses can be cached and reused (see `last_authors()`). With
+# `links = FALSE` the `fn`/`calls` columns stay empty.
+resolve_source <- function(parsed, files, read_extra, links = TRUE) {
   recs <- unlist(lapply(parsed, `[[`, "recs"), recursive = FALSE)
   external <- do.call(rbind, c(list(empty_external()), lapply(parsed, `[[`, "external")))
 
@@ -98,7 +99,9 @@ resolve_source <- function(parsed, files, read_extra) {
     for (t in templates) if (is.na(map_of[t])) map_of[t] <- id
   }
 
-  for (i in seq_along(recs)) {
+  # calls between functions and the function of each target (skipped when
+  # only ids and hashes are needed, e.g. for every commit of the history)
+  for (i in if (links) seq_along(recs) else integer()) {
     r <- recs[[i]]
     if (r$kind == "function") {
       recs[[i]]$calls <- setdiff(intersect(r$names, fn_names), r$name)
@@ -362,12 +365,16 @@ roxygen_title <- function(lines, line) {
   if (length(block)) paste(trimws(block), collapse = " ") else NA_character_
 }
 
+# tools::md5sum() hashes raw bytes directly from R 4.5 on (same digest).
+md5_bytes <- "bytes" %in% names(formals(tools::md5sum))
+
 # Lines of a file as UTF-8, whatever the session locale.
 read_utf8 <- function(file) {
   readLines(file, warn = FALSE, encoding = "UTF-8")
 }
 
 md5_text <- function(text) {
+  if (md5_bytes) return(unname(tools::md5sum(bytes = charToRaw(enc2utf8(text)))))
   f <- tempfile()
   on.exit(unlink(f))
   writeBin(charToRaw(enc2utf8(text)), f)
