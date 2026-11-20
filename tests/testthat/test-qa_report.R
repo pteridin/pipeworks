@@ -73,7 +73,8 @@ test_that("PDF text: confirmation when passed, draft banner and open items other
   ok <- flat(txt(qa_report(repo, output = file.path(tempdir(), "ok.pdf"), title = "Survey QA")))
   expect_match(ok, "WIG2 GmbH", fixed = TRUE)
   expect_match(ok, "Survey QA", fixed = TRUE)
-  expect_match(ok, "Every function and target definition in this code version was reviewed by a second analyst", fixed = TRUE)
+  expect_match(ok, "Every function, target and top-level code block in this code version was reviewed by a second analyst other than the person who last changed it", fixed = TRUE)
+  expect_match(ok, "Scope: all R code in R/ and _targets.R", fixed = TRUE)
   expect_match(ok, "generated digitally and is valid without signature", fixed = TRUE)
   expect_false(grepl("DRAFT", ok, fixed = TRUE))
   expect_match(ok, "Edge case x = NA not handled", fixed = TRUE)
@@ -85,7 +86,7 @@ test_that("PDF text: confirmation when passed, draft banner and open items other
   draft <- flat(txt(qa_report(repo, output = file.path(tempdir(), "draft.pdf"))))
   expect_match(draft, "DRAFT – QA incomplete", fixed = TRUE)
   expect_match(draft, "function:f", fixed = TRUE)
-  expect_false(grepl("Every function and target definition", draft, fixed = TRUE))
+  expect_false(grepl("Every function, target and top-level code block", draft, fixed = TRUE))
 })
 
 test_that("ref reports an older commit and removes its worktree", {

@@ -425,6 +425,10 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
         <span><i style="background:var(--s-new)"></i>Never run</span>
       </div>
     </div>
+    <div class="sb-section" id="qa-outside-section" hidden>
+      <p class="eyebrow">Review items outside the canvas</p>
+      <div id="qa-outside"></div>
+    </div>
     <div class="sb-section" id="qa-legend" hidden>
       <p class="eyebrow">Review status</p>
       <div class="legend">
@@ -511,7 +515,7 @@ function fromModel(D) {
       args: arr(t.args).map(a => ({ name: a.name, value: a.value, kind: a.kind, named: !!a.named, refs: arr(a.targets) })),
       pattern: t.pattern || '', description: t.description || '', format: t.format || 'rds', status: t.status || 'unknown',
       factory: t.factory || '', source: t.source || '', block: t.block || '', map: t.map || null,
-      branches: t.branches ?? null, qa: t.qa || null, x: 0, y: 0,
+      branches: t.branches ?? null, qa: t.qa || null, qa_file: t.qa_file || null, x: 0, y: 0,
     };
   });
   return { targets, fns, edges: arr(D.edges).map(e => ({ from: e.from, to: e.to })), sel: null };
@@ -519,6 +523,9 @@ function fromModel(D) {
 const FILES = Object.fromEntries(arr(RAW.files).map(f => [f.path, f.text]));
 const MAPS = Object.fromEntries(arr(RAW.maps).map(m => [m.id, { ...m, templates: arr(m.templates), variants: arr(m.variants), color: ((m.color_index || 1) - 1) % 6 + 1 }]));
 const QA = RAW.qa_summary || null;
+/* review items without a box on the canvas (objects, rests of blocks, helper functions, report sources) */
+const OUTSIDE = arr(QA && QA.outside);
+const OUTSIDE_OPEN = OUTSIDE.filter(o => !o.passing);
 let S = fromModel(RAW);
 const unfolded = new Set();   // map ids shown as single variants (view state, not undone)
 const SP = {};                // positions of folded map cards, by view id
@@ -629,17 +636,19 @@ let qaOn = !!QA;
 function qaRecords(did) {
   const n = vnode(did); if (!n) return [];
   const out = [], seen = new Set(), add = q => { if (q && !seen.has(q.item)) { seen.add(q.item); out.push(q); } };
-  n.members.forEach(id => { add(S.targets[id].qa); add(fnOf(id)?.qa); });
+  n.members.forEach(id => { add(S.targets[id].qa); add(S.targets[id].qa_file); add(fnOf(id)?.qa); });
   if (n.map) add(MAPS[n.map.id]?.qa);
   return out;
 }
 function qaOf(did) {
   const recs = qaRecords(did); if (!recs.length) return null;
   const worst = recs.reduce((a, q) => (QA_RANK[q.status] ?? 9) < (QA_RANK[a.status] ?? 9) ? q : a);
-  const self = recs.some(q => q.self_reviewed);
+  const self = recs.some(q => q.self_reviewed), unknown = recs.some(q => q.authorship_unknown);
   let g = qaGroup(worst.status);
-  if (g === 'ok' && self) g = 'todo';
-  const tag = g === 'bad' || g === 'doubt' ? QA_LABEL[worst.status] : g === 'again' ? 'check again' : g === 'todo' ? (self && worst.status === 'correct' ? 'self-reviewed' : 'review') : '';
+  /* a verdict by the author (or by someone we cannot tell apart) does not pass qa_check() */
+  const blocked = (self || unknown) && g !== 'bad' && g !== 'todo';
+  if (blocked) g = 'todo';
+  const tag = g === 'bad' || g === 'doubt' ? QA_LABEL[worst.status] : g === 'again' ? 'check again' : g === 'todo' ? (blocked ? (self ? 'self-reviewed' : 'authorship unknown') : 'review') : '';
   return { group: g, status: worst.status, self, tag };
 }
 const argValue = a => a.kind === 'target' ? nm(a.refs[0]) : a.value;
@@ -1172,7 +1181,7 @@ function renderModal() {
 function qaSection(id) {
   if (!QA) return '';
   const t = S.targets[id], mp = mapOf(id);
-  const recs = [[t.qa, 'target'], [fnOf(id)?.qa, 'function'], [mp && MAPS[mp.id]?.qa, 'map']].filter(r => r[0]);
+  const recs = [[t.qa, 'target'], [t.qa_file, 'file'], [fnOf(id)?.qa, 'function'], [mp && MAPS[mp.id]?.qa, 'map']].filter(r => r[0]);
   if (!recs.length) return `<section class="qa-sec"><span class="help">No review item for ${esc(t.name)} (it was not found in the source files).</span></section>`;
   const fmtDate = d => d ? esc(String(d).replace('T', ' ').replace(/(\.\d+)?Z$/, '')) : '';
   const items = recs.map(([q]) => {
@@ -1180,6 +1189,7 @@ function qaSection(id) {
     return `<div class="qa-item">
       <div class="qa-head"><code>${esc(q.item)}</code><span class="qa-st ${g}">${esc(QA_LABEL[q.status] || q.status)}</span>
         ${q.self_reviewed ? '<span class="qa-st bad" title="qa_check() fails until someone else reviews it">self-reviewed</span>' : ''}
+        ${q.authorship_unknown ? '<span class="qa-st bad" title="The entry lacks the author or reviewer email; qa_check() fails until it is reviewed again">authorship unknown</span>' : ''}
         ${q.changed_vs_base ? `<span class="help">changed vs <code>${esc(QA.base)}</code></span>` : ''}
         ${q.last_author ? `<span class="help">last changed by ${esc(q.last_author)}</span>` : ''}</div>
       ${diffHtml(q)}
@@ -1307,18 +1317,27 @@ function renderQaBar() {
   const pct = x => QA.total ? (100 * x / QA.total).toFixed(1) + '%' : '0%';
   bar.innerHTML = `${QA.branch ? `<span>Reviewing <b>${esc(QA.branch)}</b>${QA.base ? ` → <b>${esc(QA.base)}</b>` : ''}</span>` : ''}
     <span class="qa-prog" role="img" aria-label="${QA.done} of ${QA.total} reviewed"><i style="width:${pct(QA.done)};background:var(--s-ok)"></i><i style="width:${pct(QA.wrong)};background:var(--s-err)"></i></span>
-    <span id="qa-progress">${QA.done} of ${QA.total} done${QA.wrong ? ` · ${QA.wrong} wrong` : ''} · ${QA.open} open</span>
+    <span id="qa-progress">${QA.done} of ${QA.total} done · ${QA.open} open${QA.wrong ? ` · ${QA.wrong} wrong` : ''}${QA.check_again ? ` · ${QA.check_again} check again` : ''}</span>
+    ${OUTSIDE.length ? `<button class="btn small" id="btn-outside" title="Review items without a box on the canvas (objects, block rests, helpers, report sources)">${OUTSIDE_OPEN.length} of ${OUTSIDE.length} outside the canvas open</button>` : ''}
     <button class="btn small qa-toggle" id="btn-qa" aria-pressed="${qaOn}" title="Show the review status on the canvas">Review overlay</button>`;
+  const sec = $('#qa-outside-section');
+  sec.hidden = !OUTSIDE.length;
+  $('#qa-outside').innerHTML = OUTSIDE_OPEN.length
+    ? OUTSIDE_OPEN.map(o => `<button class="helper" data-qaloc="${esc(o.item)}" title="Show ${esc(o.item)} in ${esc(o.file)}"><b>${esc(o.item)}</b><span><span class="qa-st ${o.passing ? qaGroup(o.status) : o.status === 'wrong' ? 'bad' : 'todo'}">${esc(o.passing ? (QA_LABEL[o.status] || o.status) : o.status === 'correct' || o.status === 'questionable' || o.status === 'check_again' ? 'not passing' : (QA_LABEL[o.status] || o.status))}</span> · ${esc(o.file)}:${o.line1}</span></button>`).join('')
+    : `<p class="all-good">All ${OUTSIDE.length} items outside the canvas pass.</p>`;
 }
 
 document.querySelector('.sidebar').addEventListener('click', e => {
   const h = e.target.closest('[data-fnloc]'); if (h) return openInRStudio(fnLoc(h.dataset.fnloc));
+  const ql = e.target.closest('[data-qaloc]');
+  if (ql) { const o = OUTSIDE.find(x => x.item === ql.dataset.qaloc); return o && openInRStudio({ file: o.file, line: o.line1, from: o.line1, to: o.line2 }); }
   const mp = e.target.closest('[data-map]'); if (mp) return toggleMap(mp.dataset.map);
   const b = e.target.closest('[data-goto]'); if (!b) return;
   goto(b.dataset.goto);
   if (b.dataset.open) openModal(b.dataset.goto);
 });
 $('#qa-bar').addEventListener('click', e => {
+  if (e.target.closest('#btn-outside')) { const sec = $('#qa-outside-section'); if (sec.scrollIntoView) sec.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'nearest' }); return; }
   if (!e.target.closest('#btn-qa')) return;
   qaOn = !qaOn; renderQaBar();
 });

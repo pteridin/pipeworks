@@ -92,7 +92,13 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   if (model.qa_summary) {
     ok(!d.getElementById('qa-bar').hidden, 'QA bar shown');
     const s = model.qa_summary, txt = d.getElementById('qa-progress').textContent;
-    ok(txt === `${s.done} of ${s.total} done${s.wrong ? ` · ${s.wrong} wrong` : ''} · ${s.open} open`, `progress text: "${txt}"`);
+    ok(txt === `${s.done} of ${s.total} done · ${s.open} open${s.wrong ? ` · ${s.wrong} wrong` : ''}${s.check_again ? ` · ${s.check_again} check again` : ''}`, `progress text: "${txt}"`);
+    const outside = (s.outside || []).filter(o => !o.passing);
+    ok(!d.getElementById('qa-outside-section').hidden, 'items outside the canvas listed in the sidebar');
+    ok($$('#qa-outside [data-qaloc]').length === outside.length && outside.length > 0, `open items outside the canvas: ${$$('#qa-outside [data-qaloc]').map(b => b.dataset.qaloc).join(', ')}`);
+    ok(d.getElementById('btn-outside')?.textContent.startsWith(`${outside.length} of ${(s.outside || []).length}`), 'QA bar counts items outside the canvas');
+    click(d.querySelector('#qa-outside [data-qaloc]'));
+    ok(d.getElementById('drawer').classList.contains('open'), 'an outside item opens its source');
     ok(d.getElementById('canvas').classList.contains('qa-on'), 'canvas has QA overlay on');
     for (const c of ['qa-todo', 'qa-doubt', 'qa-ok']) ok($$(`#nodes .node.${c}`).length > 0, `nodes with ${c}: ${$$(`#nodes .node.${c}`).map(n => n.dataset.id).join(', ')}`);
     ok(d.querySelector('#nodes .node[data-id="channel_counts"]').classList.contains('qa-todo'), 'channel_counts needs review');

@@ -89,20 +89,25 @@ remove_worktree <- function(path, dir) {
 #' @noRd
 report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL,
                         project = basename(normalizePath(path, mustWork = TRUE))) {
-  st <- qa_status(path)
-  check_ok <- tryCatch({ suppressMessages(qa_check(path)); TRUE }, error = function(e) FALSE)
+  # the check itself, without the git history (see qa_check())
+  st <- qa_status(path, authors = FALSE)
+  ext <- attr(st, "external")
+  pass <- qa_passing(st)
+  check_ok <- all(pass) && !nrow(ext)
   dirty <- is.null(ref) && has_uncommitted(path, st)
   empty <- nrow(st) == 0
   passed <- check_ok && !dirty && !empty
-  reason <- if (passed) "none" else if (dirty) "uncommitted" else if (empty) "empty" else "open"
+  reason <- if (passed) "none" else if (dirty) "uncommitted" else if (empty) "empty"
+    else if (nrow(ext)) "external" else "open"
 
   verdict <- as.character(st$status)
-  verdict[st$self_reviewed] <- "self_reviewed"
+  verdict[st$self_reviewed %in% TRUE] <- "self_reviewed"
+  verdict[is.na(st$self_reviewed)] <- "authorship_unknown"
   counts <- list(
     items = nrow(st),
-    correct = sum(verdict %in% c("correct", "check_again")),
-    questionable = sum(verdict == "questionable"),
-    wrong_open = sum(!verdict %in% c("correct", "check_again", "questionable"))
+    correct = sum(pass & st$status %in% c("correct", "check_again")),
+    questionable = sum(pass & st$status == "questionable"),
+    wrong_open = sum(!pass)
   )
 
   commit <- git_head(path)
@@ -141,7 +146,11 @@ report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL
     draft_reason = reason,
     commit = if (is.na(commit)) NULL else substr(commit, 1, 7),
     date = format(Sys.Date()),
+    # from the review entries; complete only when every item is reviewed
     analysts = distinct(st$last_author),
+    analysts_complete = all(pass),
+    scope = report_scope(st),
+    external = as.list(unique(ext$path)),
     reviewers = distinct(st$reviewer),
     counts = counts,
     passed = passed,
@@ -149,10 +158,20 @@ report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL
     blocks = blocks,
     edges = edges,
     levels = block_levels(vapply(blocks, `[[`, "", "block"), edges),
-    open = lapply(which(!verdict %in% c("correct", "check_again", "questionable")), function(i) list(
+    open = lapply(which(!pass), function(i) list(
       id = st$id[i], verdict = verdict[i], block = st$block[i]
     )),
     history = review_history(path)
+  )
+}
+
+# "Scope: ..." line of the cover: what the review covers, exactly.
+report_scope <- function(st) {
+  sources <- sort(unique(st$file[st$kind == "file"]))
+  paste0(
+    "Scope: all R code in R/ and _targets.R",
+    if (length(sources)) paste0(" and the report sources (", paste(sources, collapse = ", "), ")"),
+    ". Data files are not reviewed."
   )
 }
 

@@ -26,6 +26,7 @@ format:
   unreviewed: ("Open: not reviewed", red),
   changed: ("Open: changed since review", red),
   self_reviewed: ("Open: reviewed by its author", red),
+  authorship_unknown: ("Open: authorship unknown", red),
 )
 #let verdict-cell(v) = {
   let entry = verdicts.at(v, default: (v, red))
@@ -68,10 +69,11 @@ format:
   columns: (auto, 1fr), stroke: none, inset: (x: 0pt, y: 4pt), column-gutter: 14pt,
   text(fill: muted)[Code version],
   d.version,
-  text(fill: muted)[Analyst(s)], names(d.analysts),
+  text(fill: muted)[#if d.analysts_complete [Analyst(s)] else [Analyst(s) of reviewed items]], names(d.analysts),
   text(fill: muted)[Reviewer(s)], names(d.reviewers),
   text(fill: muted)[Created], d.date,
 )
+#text(size: 9pt, fill: muted)[#d.scope]
 #v(0.4cm)
 
 #grid(
@@ -84,7 +86,7 @@ format:
 #v(0.5cm)
 
 #if d.passed [
-  Every function and target definition in this code version was reviewed by a second analyst who did not write it. Each verdict refers to the exact code identified by its hash; code that changed after a review was reviewed again.
+  Every function, target and top-level code block in this code version was reviewed by a second analyst other than the person who last changed it. Each verdict refers to the exact code identified by its hash; code that changed after a review was reviewed again.
 ] else [
   #block(stroke: 1pt + red, inset: 10pt, radius: 3pt)[
     *This report does not confirm the review.*
@@ -92,6 +94,8 @@ format:
       The working copy has uncommitted changes in code or review entries, so the reviewed code cannot be tied to a commit. Commit them and render the report again.
     ] else if d.draft_reason == "empty" [
       No reviewable items were found, so there is nothing to confirm.
+    ] else if d.draft_reason == "external" [
+      The pipeline loads code from #d.external.join(", "), outside R/ and \_targets.R. pipeworks cannot review that code, so the QA check does not pass for this code version.
     ] else [
       #d.counts.wrong_open item(s) are wrong or still open, so the QA check does not pass for this code version. The list of open items follows below.
     ]
