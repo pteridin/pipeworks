@@ -40,7 +40,8 @@ read_source_text <- function(texts) {
 build_source <- function(texts, read_extra) {
   files <- names(texts)
   is_code <- function(f) f == "_targets.R" || grepl("^R/", f)
-  parsed <- lapply(files, function(f) parse_source_file(f, texts[[f]], is_r = grepl("^R/", f)))
+  # Factory sources (.Rmd/.qmd) are only hashed as text, never parsed as R.
+  parsed <- lapply(files[vapply(files, is_code, logical(1))], function(f) parse_source_file(f, texts[[f]], is_r = grepl("^R/", f)))
   recs <- unlist(parsed, recursive = FALSE)
 
   fn_recs <- Filter(function(r) r$kind == "function", recs)

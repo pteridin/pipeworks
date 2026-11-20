@@ -109,3 +109,8 @@ test_that("the example project parses statically with both maps", {
   expect_equal(nrow(maps), 2)
   expect_setequal(maps$id, c("map:model_fit", "map:area_data+area_hist"))
 })
+
+test_that("factory source files are hashed as text, not parsed as R", {
+  s <- read_source_text(list("_targets.R" = "tarchetypes::tar_render(report, 'report.Rmd')", "report.Rmd" = c("# Title", "", "Some prose (unbalanced")))
+  expect_true("file:report.Rmd" %in% s$items$id)
+})

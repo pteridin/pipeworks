@@ -56,24 +56,37 @@ git_file_clean <- function(path, file) {
   !is.null(st) && length(st) == 0
 }
 
-# Hash of every item of `file` as of `commit` (named by id); an old version
-# that does not parse counts as "no items".
-git_item_hashes <- function(path, commit, file) {
-  lines <- git_try(path, c("show", paste0(commit, ":", file)))
-  if (is.null(lines)) return(character())
-  src <- tryCatch(read_source_text(stats::setNames(list(lines), file)), error = function(e) NULL)
-  if (is.null(src) || !nrow(src$items)) return(character())
-  stats::setNames(src$items$hash, src$items$id)
+# Hash of every item (named by id) of the code tree at `commit`: all `R/*.R`,
+# `_targets.R` and the factory source files `extra`, relative to `path` (which
+# may be below the repo root). A version that does not parse counts as "no
+# items". Cached per commit in `cache`.
+git_item_hashes <- function(path, commit, extra, cache) {
+  if (!is.null(cache[[commit]])) return(cache[[commit]])
+  tree <- git_run(path, c("ls-tree", "-r", "--name-only", commit))
+  keep <- tree[grepl("^R/[^/]*\\.[Rr]$", tree) | tree == "_targets.R" | tree %in% extra]
+  texts <- list()
+  for (f in sort(keep)) {
+    lines <- git_try(path, c("show", paste0(commit, ":./", f)))
+    if (!is.null(lines)) texts[[f]] <- lines
+  }
+  src <- tryCatch(read_source_text(texts), error = function(e) NULL)
+  hashes <- if (is.null(src) || !nrow(src$items)) character() else stats::setNames(src$items$hash, src$items$id)
+  cache[[commit]] <- hashes
+  hashes
 }
 
 #' Who last changed the hash of each item
 #'
-#' For every item, the most recent commit in which its hash changed (or in
-#' which it appeared), so reformatting and comment edits do not count. An item
-#' whose working-tree hash differs from `HEAD` has uncommitted changes and gets
-#' no author. Outside git, or in a repo without commits, all fields are `NA`.
+#' The author of an item is the author of its *introducing commit*: the most
+#' recent commit (topological order) whose version of the item has the current
+#' hash while none of its parents' versions has it. Reformatting and comment
+#' edits do not change a hash, so they never count; a merge commit is credited
+#' only when it itself produced the hash (e.g. a conflict resolution). Versions
+#' are hashed from the whole code tree at each commit. An item whose
+#' working-tree hash differs from `HEAD` has uncommitted changes and gets no
+#' author. Outside git, or in a repo without commits, all fields are `NA`.
 #'
-#' @param path Root folder of the project.
+#' @param path Root folder of the project (may be below the repo root).
 #' @param items The `items` data frame of `read_source()`.
 #' @return A data frame with `id`, `author_name`, `author_email`, `commit`.
 #' @noRd
@@ -85,32 +98,42 @@ last_authors <- function(path, items) {
     commit = rep(NA_character_, nrow(items)),
     stringsAsFactors = FALSE
   )
-  if (is.na(git_head(path)) || !nrow(items)) return(out)
+  head <- git_head(path)
+  if (is.na(head) || !nrow(items)) return(out)
 
-  for (f in unique(items$file)) {
-    log <- git_try(path, c("log", "--format=%H%x1f%an%x1f%ae", "--", f))
-    if (!length(log)) next
-    parts <- strsplit(log, "\x1f", fixed = TRUE)
-    commits <- vapply(parts, `[`, character(1), 1)
-    names_ <- vapply(parts, function(p) if (length(p) >= 2) p[2] else NA_character_, character(1))
-    emails <- vapply(parts, function(p) if (length(p) >= 3) p[3] else NA_character_, character(1))
-    # Newest first; the version before the oldest commit has no items.
-    versions <- lapply(commits, function(cm) git_item_hashes(path, cm, f))
-    versions[[length(versions) + 1]] <- character()
+  log <- git_run(path, c("-c", "log.showSignature=false", "log", "--topo-order", "--format=%H%x1f%an%x1f%ae%x1f%P", head))
+  parts <- strsplit(log, "\x1f", fixed = TRUE)
+  shas <- vapply(parts, `[`, character(1), 1)
+  field <- function(i) vapply(parts, function(p) if (length(p) >= i) p[i] else "", character(1))
+  meta <- list(name = field(2), email = field(3), parents = strsplit(field(4), " ", fixed = TRUE))
+  idx <- function(sha) match(sha, shas)
 
-    for (i in which(items$file == f)) {
-      id <- items$id[i]
-      cur <- vapply(versions, function(v) if (id %in% names(v)) v[[id]] else NA_character_, character(1))
-      if (is.na(cur[1]) || cur[1] != items$hash[i]) next
-      # Newest commit whose version differs from the next older one.
-      k <- which(is.na(cur[-length(cur)]) != is.na(cur[-1]) |
-        (!is.na(cur[-length(cur)]) & !is.na(cur[-1]) & cur[-length(cur)] != cur[-1]))
-      if (!length(k)) next
-      k <- k[1]
-      out$author_name[i] <- names_[k]
-      out$author_email[i] <- emails[k]
-      out$commit[i] <- commits[k]
+  extra <- items$file[items$kind == "file"]
+  cache <- new.env()
+  has <- function(sha, id, hash) {
+    h <- git_item_hashes(path, sha, extra, cache)
+    id %in% names(h) && identical(h[[id]], hash)
+  }
+
+  for (i in seq_len(nrow(items))) {
+    id <- items$id[i]
+    hash <- items$hash[i]
+    if (!has(head, id, hash)) next
+    seen <- character()
+    found <- integer()
+    todo <- head
+    while (length(todo)) {
+      sha <- todo[1]
+      todo <- todo[-1]
+      if (sha %in% seen) next
+      seen <- c(seen, sha)
+      with_hash <- Filter(function(p) has(p, id, hash), meta$parents[[idx(sha)]])
+      if (length(with_hash)) todo <- c(todo, with_hash) else found <- c(found, idx(sha))
     }
+    k <- min(found)
+    out$author_name[i] <- meta$name[k]
+    out$author_email[i] <- meta$email[k]
+    out$commit[i] <- shas[k]
   }
   out
 }
