@@ -2,16 +2,18 @@
 # workstation and a CI job with LC_ALL=C must agree.
 
 hash_in_locale <- function(dir, locale, git = FALSE) {
-  root <- normalizePath(testthat::test_path("..", ".."), mustWork = FALSE)
-  load <- if (file.exists(file.path(root, "DESCRIPTION")) && requireNamespace("pkgload", quietly = TRUE)) {
-    sprintf("pkgload::load_all(%s, quiet = TRUE, export_all = TRUE)", deparse(root))
+  # the package code: its R/ sources when testing from the source tree, else
+  # the installed package (R CMD check)
+  r_dir <- normalizePath(testthat::test_path("..", "..", "R"), mustWork = FALSE)
+  load <- if (dir.exists(r_dir)) {
+    sprintf("pw <- new.env(); for (f in list.files(%s, pattern = '[.]R$', full.names = TRUE)) sys.source(f, envir = pw)", deparse(r_dir))
   } else {
-    "library(pipeworks)"
+    "pw <- asNamespace('pipeworks')"
   }
   get <- if (git) {
-    sprintf("h <- pipeworks:::git_item_hashes(%s, 'HEAD', character(), new.env()); cat(h[order(names(h))], sep = '\\n')", deparse(dir))
+    sprintf("h <- pw$git_item_hashes(%s, 'HEAD', character(), new.env()); cat(h[order(names(h))], sep = '\\n')", deparse(dir))
   } else {
-    sprintf("it <- pipeworks:::read_source(%s)$items; cat(it$hash[order(it$id)], sep = '\\n')", deparse(dir))
+    sprintf("it <- pw$read_source(%s)$items; cat(it$hash[order(it$id)], sep = '\\n')", deparse(dir))
   }
   script <- tempfile(fileext = ".R")
   writeLines(c(load, get), script)

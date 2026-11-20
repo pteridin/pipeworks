@@ -54,11 +54,17 @@ set_git_user <- function(repo, name, email) {
   invisible(repo)
 }
 
+# `git init` on branch main (without `-b`, which needs git >= 2.28).
+git_init_main <- function(repo) {
+  git_cmd(repo, "init", "-q")
+  git_cmd(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+}
+
 # A temp git repo (plain git, repo-local identity, no signing) with `files`
 # committed as "initial". Returns its path.
 local_git_repo <- function(files, author = c("Ann", "ann@wig2.de"), env = parent.frame()) {
   repo <- local_project(files, env = env)
-  git_cmd(repo, "init", "-q", "-b", "main")
+  git_init_main(repo)
   set_git_user(repo, author[1], author[2])
   git_cmd(repo, "config", "commit.gpgsign", "false")
   git_cmd(repo, "add", "-A")

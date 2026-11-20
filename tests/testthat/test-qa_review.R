@@ -65,7 +65,7 @@ test_that("write_review never overwrites an existing entry", {
 test_that("a missing git identity is refused", {
   repo <- local_git_repo(list("R/a.R" = "f <- function(x) x"))
   git_cmd(repo, "config", "--unset", "user.email")
-  withr::local_envvar(GIT_CONFIG_GLOBAL = "/dev/null", GIT_CONFIG_SYSTEM = "/dev/null")
+  withr::local_envvar(GIT_CONFIG_GLOBAL = nullfile(), GIT_CONFIG_SYSTEM = nullfile())
   expect_error(qa_review("f", "correct", path = repo), "git config user.email")
 })
 

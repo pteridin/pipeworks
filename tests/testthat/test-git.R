@@ -43,7 +43,7 @@ test_that("no commits and no git are handled", {
   expect_true(all(is.na(la$author_email)))
   expect_false(git_file_clean(dir, "R/a.R"))
   skip_if_not(git_available())
-  git_cmd(dir, "init", "-q", "-b", "main")
+  git_init_main(dir)
   expect_true(is.na(git_head(dir)))
   expect_true(all(is.na(last_authors(dir, read_source(dir)$items)$author_email)))
 })
@@ -105,7 +105,7 @@ test_that("map and file items get authors from the full code tree", {
     dir.create(file.path(repo, dirname(f)), recursive = TRUE, showWarnings = FALSE)
     file.copy(file.path(example_dir(), f), file.path(repo, f))
   }
-  git_cmd(repo, "init", "-q", "-b", "main")
+  git_init_main(repo)
   set_git_user(repo, "Ann", "ann@wig2.de")
   git_cmd(repo, "config", "commit.gpgsign", "false")
   git_cmd(repo, "add", "-A")

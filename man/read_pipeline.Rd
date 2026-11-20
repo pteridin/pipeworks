@@ -15,8 +15,12 @@ Each target also carries its \code{block} (the file it is written in, from the
 static source model) and, for \code{tar_map()} variants, its \code{map} (\code{id},
 \code{template}, \code{variant}); \code{maps} lists the maps with their templates,
 variants and a colour index. In a git repository with commits every target
-and function gets its review status (\code{qa}, see \code{\link[=qa_status]{qa_status()}}) and the model
-a \code{qa_summary}; outside git both are \code{NULL}.}
+and function gets its review status (\code{qa}, see \code{\link[=qa_status]{qa_status()}}; a factory
+target also \code{qa_file}, the status of its report source) and the model a
+\code{qa_summary} (\code{total}, \code{done} = items passing \code{\link[=qa_check]{qa_check()}}, \code{open}, \code{wrong},
+\code{check_again} and \code{outside}, the items without a box on the canvas);
+outside git both are \code{NULL}. The git history is not read: the last author
+shown comes from the review entries.}
 }
 \value{
 A \code{pipeworks_model}: a list with \code{project}, \code{targets}, \code{functions},

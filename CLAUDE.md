@@ -27,17 +27,30 @@ The QA engine is static: it parses source files and never runs pipeline code.
 
 - **Item** (`read_source()`): ids `function:<name>`, `target:<name>`,
   `map:<templates joined by "+">`, `object:<file>:<name>`, `file:<path>`.
-  Hash = MD5 of the parse tokens without comments and whitespace.
+  Hash = MD5 of the parse tokens without comments and whitespace (read as
+  UTF-8, locale-independent). Scope: every `.R` below `R/` (recursive, like
+  `tar_source()`), `_targets.R`, report sources. Each top-level expression
+  holding targets also gets a rest item (`object:<file>:<holder or call#n>`:
+  its tokens minus the recognised target/map calls, each counted as one
+  placeholder), so deleted targets and unknown factories change it.
+  `source()`/`sys.source()`/`tar_source(<other dir>)` are listed as
+  `external` and fail `qa_check()`.
 - **Ledger** `qa/reviews/*.json`: one file per verdict, never edited. Latest
   entry per item wins. Optional `qa/people` (DCF: `Name`, `Emails`) maps
   emails to one person.
 - **Status** (`qa_status()`): `unreviewed`, `changed` (hash differs, also
   after a revert), `correct`/`questionable`/`wrong`, plus the non-failing
   hint `check_again` (a callee changed) and `self_reviewed` (entry's reviewer
-  equals its recorded author; compared by stored emails, so squash and rebase
-  are safe). Deleted items leave only orphan entries.
+  equals its recorded author; compared by stored emails, lower-cased, so
+  squash and rebase are safe; `NA` = authorship unknown, which fails).
+- **Done** = passes `qa_check()` (`qa_passing()`): used by the editor,
+  `print()` and the report alike. `check_again` passes.
 - `qa_check()` is the CI gate; `qa_report()` renders a PDF with Quarto/Typst
-  (draft unless `qa_check()` passes; `final = TRUE` refuses otherwise).
+  (draft unless `qa_check()` passes; `final = TRUE` refuses otherwise). Both
+  and `read_pipeline()` use `qa_status(authors = FALSE)`: no history walk.
+- `last_authors()` walks the history with bulk `git cat-file` reads; per-file
+  parses (`parse_source_file()`) are cached by blob, the cross-file step is
+  `resolve_source()`.
 - Code: `R/source_model.R` (items, hashes), `R/git.R` (git via `system2`),
   `R/qa_ledger.R` (read/write entries, people), `R/qa.R` (`qa_review()`),
   `R/qa_status.R` (`qa_status()`, `qa_check()`), `R/qa_report.R` +

@@ -33,7 +33,7 @@ test_that("check_again passes and is counted as correct in the report", {
   git_cmd(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "rereview")
   st <- qa_status(repo)
   expect_true(any(st$status == "check_again"))
-  expect_message(qa_check(repo), "passed")
+  expect_message(expect_message(qa_check(repo), "check again: function:h, target:t1"), "passed")
   d <- report_data(repo)
   expect_true(d$passed)
   expect_equal(d$counts$wrong_open, 0)

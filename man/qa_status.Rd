@@ -4,7 +4,7 @@
 \alias{qa_status}
 \title{Review status of every item}
 \usage{
-qa_status(path = ".", base = NULL, orphans = FALSE)
+qa_status(path = ".", base = NULL, orphans = FALSE, authors = TRUE)
 }
 \arguments{
 \item{path}{Project root.}
@@ -14,9 +14,16 @@ the item's hash differs from (or is missing at) that ref.}
 
 \item{orphans}{If \code{TRUE}, return the review entries whose item no longer
 exists instead.}
+
+\item{authors}{If \code{FALSE}, skip reading the git history: \code{last_author} then
+comes from the matching review entry only (\code{NA} for unreviewed or changed
+items). The status itself never needs the history.}
 }
 \value{
-A data frame of class \code{pipeworks_qa_status}.
+A data frame of class \code{pipeworks_qa_status}. Its attribute
+\code{external} lists calls that load code from outside \verb{R/} and \verb{_targets.R}
+(\code{source()}, \code{sys.source()}, \code{tar_source()} of another folder): code
+pipeworks cannot review, which makes \code{\link[=qa_check]{qa_check()}} fail.
 }
 \description{
 Combines the static source model with the review ledger. For each item the
@@ -25,5 +32,11 @@ latest entry decides: no entry is \code{unreviewed}; a different hash is
 \code{correct} verdict whose recorded callee hashes (\code{depends}) no longer match is
 \code{check_again} (a hint, not a reset). \code{self_reviewed} flags a matching entry
 whose reviewer is the person who wrote the code (compared by the emails
-stored in the entry, mapped through \code{qa/people}).
+stored in the entry, case-insensitively and mapped through \code{qa/people}); it
+is \code{NA} ("authorship unknown") when the entry lacks either email.
+}
+\details{
+An item is \emph{done} when it passes \code{\link[=qa_check]{qa_check()}}: \code{correct}, \code{check_again} or
+(when allowed) \code{questionable}, reviewed by someone other than its last
+author, with both known.
 }

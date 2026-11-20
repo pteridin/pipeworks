@@ -16,7 +16,8 @@ roxygen fields (\code{title}, \code{description}, \code{params}, \code{returns},
 \code{keywords}), the \code{formals} and the \code{body} text.
 }
 \description{
-Parses every \code{.R} file in the project's \verb{R/} folder and returns one record
+Parses every \code{.R} file below the project's \verb{R/} folder (recursively, like
+\code{tar_source()}) and returns one record
 per top-level function definition (\verb{name <- function(...)}), combined with
 its roxygen block if it has one. Nothing is sourced or evaluated.
 }

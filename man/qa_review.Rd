@@ -25,5 +25,7 @@ The entry (a list), invisibly.
 }
 \description{
 Writes one JSON file to \verb{qa/reviews/}. Commit it so the verdict travels with
-the branch. Verdicts are only possible for committed code.
+the branch. Verdicts are only possible for committed code: every code file
+(\verb{R/}, \verb{_targets.R}, report sources) must be committed, and the item's last
+author must be known from the git history.
 }

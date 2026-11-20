@@ -15,6 +15,8 @@ qa_check(path = ".", allow_questionable = TRUE)
 The status table, invisibly. Signals an error on failure.
 }
 \description{
-Passes only if every item is \code{correct} (or \code{questionable}, when allowed) and
-none is self-reviewed. \code{check_again} items are listed but never fail.
+Passes only if every item is \code{correct} (or \code{questionable}, when allowed),
+none is self-reviewed and every reviewed item's authorship is known, and no
+code is loaded from outside \verb{R/} and \verb{_targets.R}. \code{check_again} items are
+listed but never fail. The check never needs the git history.
 }

@@ -60,7 +60,9 @@ example_git_scenario <- function(path) {
     writeLines(fun(readLines(full, warn = FALSE)), full)
   }
 
-  git_run(path, c("init", "-q", "-b", "main"))
+  # `git init -b` needs git >= 2.28; this works with older versions too
+  git_run(path, c("init", "-q"))
+  git_run(path, c("symbolic-ref", "HEAD", "refs/heads/main"))
   git_run(path, c("config", "commit.gpgsign", "false"))
   set_user(analyst)
   commit(analyst, "Survey pipeline")
@@ -68,7 +70,7 @@ example_git_scenario <- function(path) {
   # The senior reviews every item of main.
   set_user(senior)
   comment <- paste(
-    "summarise_region() has no @family, so it is missing from the Reporting box,",
+    "summarise_region() has no @family documentation, unlike the other reporting functions,",
     "and the grouping is done by hand-filtering one region per branch.",
     "Group by region once and summarise instead."
   )

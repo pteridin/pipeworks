@@ -220,7 +220,7 @@ block_levels <- function(blocks, edges) {
 review_history <- function(path) {
   head <- git_head(path)
   if (is.na(head)) return(list())
-  log <- git_try(path, c("-c", "log.showSignature=false", "log", "--merges", "--format=%H%x1f%P%x1f%s%x1f%cs", head))
+  log <- git_try(path, c("-c", "log.showSignature=false", "log", "--first-parent", "--merges", "--format=%H%x1f%P%x1f%s%x1f%cs", head))
   out <- list()
   for (line in log) {
     f <- strsplit(line, "\x1f", fixed = TRUE)[[1]]

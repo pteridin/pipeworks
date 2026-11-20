@@ -163,3 +163,22 @@ test_that("an unwritable output is an error", {
   writeLines("x", blocker)
   expect_error(qa_report(reviewed_repo(), output = file.path(blocker, "r.pdf")), "Could not write")
 })
+
+test_that("history follows the first-parent line: merges inside a branch are not listed", {
+  repo <- local_git_repo(list("R/a.R" = "f <- function() 1", "_targets.R" = "list(tar_target(t1, f()))"))
+  merge <- function(msg, branch) git_cmd(repo, "-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", shQuote(msg), branch)
+  git_run(repo, c("checkout", "-q", "-b", "dev/x"))
+  git_run(repo, c("checkout", "-q", "-b", "dev/y"))
+  set_git_user(repo, "Bob", "bob@wig2.de")
+  suppressMessages(qa_review("function:f", "correct", path = repo))
+  git_cmd(repo, "add", "-A")
+  git_cmd(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "reviews")
+  git_run(repo, c("checkout", "-q", "dev/x"))
+  commit_as(repo, "README.md", "x")
+  merge("Merge branch 'dev/y' into 'dev/x'", "dev/y")
+  git_run(repo, c("checkout", "-q", "main"))
+  commit_as(repo, "NEWS.md", "y")
+  merge("Merge branch 'dev/x' into 'main'", "dev/x")
+  h <- report_data(repo)$history
+  expect_equal(vapply(h, `[[`, "", "branch"), "dev/x")
+})
