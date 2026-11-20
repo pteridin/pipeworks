@@ -17,6 +17,7 @@ Imports:
     jsonlite,
     roxygen2,
     targets (>= 1.5.0),
+    tools,
     utils,
     withr
 Suggests:

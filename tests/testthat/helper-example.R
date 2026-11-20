@@ -29,3 +29,14 @@ read_example <- function() {
   }
   example_cache$model
 }
+
+# Write named character vectors as files below a temp dir (removed when `env`
+# finishes) and return the dir.
+local_project <- function(files, env = parent.frame()) {
+  dir <- withr::local_tempdir(.local_envir = env)
+  for (f in names(files)) {
+    dir.create(dirname(file.path(dir, f)), recursive = TRUE, showWarnings = FALSE)
+    writeLines(files[[f]], file.path(dir, f))
+  }
+  dir
+}
