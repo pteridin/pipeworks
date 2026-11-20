@@ -332,7 +332,10 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 .sb-count { margin-left: auto; color: var(--muted); font-weight: 400; font-family: var(--f-mono); font-size: 11px; }
 .t-item .x { font-family: var(--f-ui); font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 99px; background: var(--mc); color: var(--panel); }
 
-/* QA overlay (read-only): orange = needs review, dashed = check again, red = wrong/questionable, greyed = correct */
+/* QA overlay (read-only): orange = needs review, dashed = check again, amber = questionable, red = wrong, greyed = correct */
+:root { --qa-doubt: #c9a100; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --qa-doubt: #e3c443; } }
+:root[data-theme="dark"] { --qa-doubt: #e3c443; }
 .qa-bar { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel); }
 .qa-bar b { color: var(--fg); font-family: var(--f-mono); font-weight: 600; }
 .qa-prog { display: inline-flex; width: 120px; height: 8px; border-radius: 99px; overflow: hidden; background: var(--soft); }
@@ -342,23 +345,31 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 .qa-on .node.stack.qa-todo { box-shadow: 4px 4px 0 -1px var(--panel), 4px 4px 0 0 var(--mc), 8px 8px 0 -1px var(--panel), 8px 8px 0 0 var(--mc), 0 0 0 3px color-mix(in srgb, var(--s-out) 20%, transparent); }
 .qa-on .node.qa-again { border: 2px dashed var(--s-out); }
 .qa-on .node.qa-bad { border: 2px solid var(--s-err); }
+.qa-on .node.qa-doubt { border: 2px solid var(--qa-doubt); background: color-mix(in srgb, var(--qa-doubt) 9%, var(--panel)); }
 .qa-on .node.qa-ok:not(.sel) { opacity: .5; }
 .qa-on .node.qa-ok.dim { opacity: .25; }
 .qa-on .node.sel { outline: 3px solid var(--accent); outline-offset: 3px; }
 .qa-tag { display: none; position: absolute; top: -9px; left: 10px; z-index: 1; padding: 0 7px; border-radius: 99px; font-size: 10px; font-weight: 700; line-height: 17px; color: var(--panel); background: var(--s-out); white-space: nowrap; }
 .qa-on .qa-tag { display: block; }
 .qa-tag.bad { background: var(--s-err); }
+.qa-tag.doubt { background: var(--qa-doubt); }
 .qa-sec { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); }
 .qa-item { display: flex; flex-direction: column; gap: 4px; }
 .qa-item + .qa-item { border-top: 1px solid var(--line); padding-top: 8px; }
 .qa-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
 .qa-st { font-size: 11px; font-weight: 700; padding: 0 7px; border-radius: 99px; line-height: 18px; background: var(--soft); color: var(--muted); }
 .qa-st.todo, .qa-st.again { background: var(--warn-bg); color: var(--warn-fg); }
+.qa-st.doubt { background: color-mix(in srgb, var(--qa-doubt) 18%, transparent); color: var(--warn-fg); }
 .qa-st.bad { background: color-mix(in srgb, var(--s-err) 16%, transparent); color: var(--s-err); }
 .qa-st.ok { background: color-mix(in srgb, var(--s-ok) 16%, transparent); color: var(--s-ok); }
 .qa-hist { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 .qa-hist li.old { opacity: .7; }
 .qa-hist q { color: var(--fg); }
+.qa-diff { margin: 0; padding: 6px 0; max-height: 260px; overflow: auto; font-family: var(--f-mono); font-size: 11.5px; line-height: 1.5; background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; }
+.qa-diff span { display: block; padding: 0 10px; white-space: pre; }
+.qa-diff .d-del { background: color-mix(in srgb, var(--s-err) 14%, transparent); color: var(--s-err); }
+.qa-diff .d-add { background: color-mix(in srgb, var(--s-ok) 14%, transparent); color: var(--s-ok); }
+.qa-diff .d-gap { color: var(--muted); font-style: italic; }
 .qa-call { display: flex; gap: 6px; align-items: center; }
 .qa-call code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 4px 8px; border-radius: 6px; background: var(--code-bg); border: 1px solid var(--line); }
 </style>
@@ -419,7 +430,8 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
       <div class="legend">
         <span><i style="border:2px solid var(--s-out);border-radius:3px"></i>Needs review</span>
         <span><i style="border:2px dashed var(--s-out);border-radius:3px"></i>Check again</span>
-        <span><i style="border:2px solid var(--s-err);border-radius:3px"></i>Wrong / questionable</span>
+        <span><i style="border:2px solid var(--qa-doubt);border-radius:3px"></i>Questionable (passes)</span>
+        <span><i style="border:2px solid var(--s-err);border-radius:3px"></i>Wrong</span>
         <span><i style="border:1px solid var(--line);border-radius:3px;opacity:.5"></i>Reviewed</span>
       </div>
       <p class="help">Record verdicts with <code>pipeworks::qa_review()</code>; the dialog of a target shows the call.</p>
@@ -583,6 +595,7 @@ const vnode = did => vg().nodes[did];
 const repOf = did => vnode(did)?.members[0] ?? did;
 const P = did => S.targets[did] || (SP[did] ||= { x: 0, y: 0 });
 const vedgeById = eid => vg().edges.find(e => edgeId(e) === eid);
+const folded = id => { const m = mapOf(id); return !!m && !unfolded.has(m.id); };
 const mapLabel = m => `${m.param || 'variants'} ×${m.variants.length}`;
 const blockName = b => b || 'no block';
 function blocks() {
@@ -607,9 +620,10 @@ function toggleMap(mid) {
 }
 
 /* ---------- QA overlay ---------- */
-const QA_RANK = { wrong: 0, questionable: 1, changed: 2, unreviewed: 3, check_again: 4, correct: 5 };
+const QA_RANK = { wrong: 0, changed: 1, unreviewed: 2, questionable: 3, check_again: 4, correct: 5 };
 const QA_LABEL = { unreviewed: 'unreviewed', changed: 'changed', check_again: 'check again', correct: 'correct', questionable: 'questionable', wrong: 'wrong' };
-const qaGroup = st => st === 'wrong' || st === 'questionable' ? 'bad' : st === 'changed' || st === 'unreviewed' ? 'todo' : st === 'check_again' ? 'again' : 'ok';
+/* questionable passes qa_check() (counts as done) but deserves a look: amber, not red */
+const qaGroup = st => st === 'wrong' ? 'bad' : st === 'questionable' ? 'doubt' : st === 'changed' || st === 'unreviewed' ? 'todo' : st === 'check_again' ? 'again' : 'ok';
 let qaOn = !!QA;
 /* Review records behind a view node: its targets (variants share their template's item), their functions, and the map of a card. */
 function qaRecords(did) {
@@ -625,7 +639,7 @@ function qaOf(did) {
   const self = recs.some(q => q.self_reviewed);
   let g = qaGroup(worst.status);
   if (g === 'ok' && self) g = 'todo';
-  const tag = g === 'bad' ? QA_LABEL[worst.status] : g === 'again' ? 'check again' : g === 'todo' ? (self && worst.status === 'correct' ? 'self-reviewed' : 'review') : '';
+  const tag = g === 'bad' || g === 'doubt' ? QA_LABEL[worst.status] : g === 'again' ? 'check again' : g === 'todo' ? (self && worst.status === 'correct' ? 'self-reviewed' : 'review') : '';
   return { group: g, status: worst.status, self, tag };
 }
 const argValue = a => a.kind === 'target' ? nm(a.refs[0]) : a.value;
@@ -895,7 +909,7 @@ function renderNodes() {
     ].join('');
     const cls = ['node', `status-${status}`, m ? `mapped mc-${m.color}` : '', n.stack ? 'stack' : '', q ? `qa-${q.group}` : '', sel ? 'sel' : '', dim ? 'dim' : ''].filter(Boolean).join(' ');
     const pill = m ? `<button class="mpill" data-map="${esc(m.id)}" title="${n.stack ? `Unfold all ${m.variants.length} variants of this tar_map(): ${esc(m.variants.join(', '))}` : 'Fold this tar_map() back into one card per template'}">${n.stack ? esc(mapLabel(m)) : 'collapse'}</button>` : '';
-    const tag = q && q.tag ? `<span class="qa-tag${q.group === 'bad' ? ' bad' : ''}" title="Review status: ${esc(QA_LABEL[q.status] || q.status)}${q.self ? ' (self-reviewed)' : ''}">${esc(q.tag)}</span>` : '';
+    const tag = q && q.tag ? `<span class="qa-tag${q.group === 'bad' || q.group === 'doubt' ? ' ' + q.group : ''}" title="Review status: ${esc(QA_LABEL[q.status] || q.status)}${q.self ? ' (self-reviewed)' : ''}">${esc(q.tag)}</span>` : '';
     return `<div class="${cls}" data-id="${esc(id)}" style="transform:translate(${pos.x}px,${pos.y}px)">
       ${tag}${pill}
       <span class="port port-in" title="Inputs plug in here"></span>
@@ -1079,11 +1093,13 @@ function argSource(t, formal) {
 }
 function renderModal() {
   const t = M.t, f = M.f, loc = srcLoc(M.id), mp = mapOf(M.id), m = mp && MAPS[mp.id];
+  // a folded card stands for all variants: only function-level edits (which apply to all of them) are allowed
+  const locked = M.locked = folded(M.id), ro = locked ? ' readonly title="Unfold the map to change single variants"' : '', dis = locked ? ' disabled title="Unfold the map to change single variants"' : '';
   const others = f ? usedBy(f.name).filter(x => x !== M.id) : [];
   const famList = [...new Set(Object.values(S.fns).map(x => x.family).filter(Boolean))];
-  const mapNote = m ? `<div class="notice mc-${m.color}"><code>${esc(t.name)}</code> is variant <code>${esc(mp.variant || '(none)')}</code> of template <code>${esc(mp.template)}</code> in <code>tar_map()</code> over <code>${esc(m.param || 'values')}</code> = ${m.variants.map(v => `<code>${esc(v)}</code>`).join(', ')}. ${unfolded.has(m.id) ? '' : 'Its card stands for all variants.'}</div>` : '';
+  const mapNote = m ? `<div class="notice mc-${m.color}"><code>${esc(t.name)}</code> is variant <code>${esc(mp.variant || '(none)')}</code> of template <code>${esc(mp.template)}</code> in <code>tar_map()</code> over <code>${esc(m.param || 'values')}</code> = ${m.variants.map(v => `<code>${esc(v)}</code>`).join(', ')}. ${locked ? '<br><b id="m-locked">Unfold the map to change single variants.</b> Its card stands for all of them; documentation and body of the function apply to every variant anyway.' : ''}</div>` : '';
   const cands = ids().filter(c => c !== M.id && !M.deps.includes(c) && !reaches(M.id, c));
-  const depList = `<div class="deps">${M.deps.map(d => `<span class="dep">${esc(nm(d))}${t.mode === 'function' ? `<button data-unplug="${esc(d)}" title="Unplug ${esc(nm(d))}" aria-label="Unplug ${esc(nm(d))}">✕</button>` : ''}</span>`).join('') || '<span class="help">None</span>'}</div>`;
+  const depList = `<div class="deps">${M.deps.map(d => `<span class="dep">${esc(nm(d))}${t.mode === 'function' && !locked ? `<button data-unplug="${esc(d)}" title="Unplug ${esc(nm(d))}" aria-label="Unplug ${esc(nm(d))}">✕</button>` : ''}</span>`).join('') || '<span class="help">None</span>'}</div>`;
   modal.innerHTML = `
     <header class="m-head status-${t.status}${m ? ` mc-${m.color}` : ''}" style="--gc:var(--mc, var(--accent))">
       <div class="m-row">
@@ -1093,7 +1109,7 @@ function renderModal() {
         ${loc && !(f && f.isNew) ? `<span class="loc">${esc(loc.file)}:${loc.line}</span><button class="btn small" data-m="rstudio">Open in RStudio</button>` : ''}
         <button class="btn small ghost" data-m="cancel" aria-label="Close">✕</button>
       </div>
-      <div class="m-row"><input class="m-name" id="m-name" data-tf="name" value="${esc(t.name)}" aria-label="Target name" spellcheck="false" autocomplete="off"></div>
+      <div class="m-row"><input class="m-name" id="m-name" data-tf="name" value="${esc(t.name)}" aria-label="Target name" spellcheck="false" autocomplete="off"${ro}></div>
       <span class="err-msg" id="m-err" hidden></span>
     </header>
     <div class="m-body">
@@ -1120,7 +1136,7 @@ function renderModal() {
         </div>` : `
         <h3>Documentation <small>${t.mode === 'factory' ? 'targets created by a factory have no roxygen block' : 'stored in <code>tar_target(description = )</code>'}</small></h3>
         <div class="field"><label for="m-desc">Description</label>
-          <textarea class="txt" id="m-desc" data-tf="description" rows="3">${esc(t.description)}</textarea></div>
+          <textarea class="txt" id="m-desc" data-tf="description" rows="3"${ro}>${esc(t.description)}</textarea></div>
         <p class="help">${t.mode === 'factory' ? `Its inputs come from <code>tar_read()</code> calls in <code>${esc(t.source)}</code>.` : `It is shown in the box of <code>${esc(blockName(t.block))}</code>, where it is written.`}</p>`}
       </div>
       <div class="m-col">${f ? `
@@ -1130,20 +1146,20 @@ function renderModal() {
           <textarea class="txt body-txt" id="m-body" data-ff="body" rows="${Math.max(5, f.body.split('\n').length + 1)}" spellcheck="false" aria-label="Function body">${esc(f.body)}</textarea>
           <div class="sig end">}</div></div>
         <div class="field"><span class="lbl">Inputs of ${esc(t.name)}</span>${depList}
-          ${cands.length ? `<select class="select" id="m-plug" aria-label="Plug in an input"><option value="">+ Plug in an input…</option>${cands.map(c => `<option value="${esc(c)}">${esc(nm(c))}</option>`).join('')}</select>` : ''}</div>` : `
+          ${cands.length && !locked ? `<select class="select" id="m-plug" aria-label="Plug in an input"><option value="">+ Plug in an input…</option>${cands.map(c => `<option value="${esc(c)}">${esc(nm(c))}</option>`).join('')}</select>` : ''}</div>` : `
         <h3>Command</h3>
         <pre class="plain">${hl(t.command || '')}</pre>
         <div class="field"><span class="lbl">Inputs</span>${depList}</div>`}
         <div class="grid2">
-          <div class="field"><label for="m-format">Storage <code>format</code></label><select class="select" id="m-format" data-tf="format" ${t.mode === 'factory' ? 'disabled' : ''}>${FORMATS.map(x => `<option${x === t.format ? ' selected' : ''}>${x}</option>`).join('')}</select></div>
-          <div class="field"><label for="m-pattern">Branching <code>pattern</code></label><input class="inp mono" id="m-pattern" data-tf="pattern" value="${esc(t.pattern)}" placeholder="map(regions)" spellcheck="false" autocomplete="off" ${t.mode === 'factory' ? 'disabled' : ''}></div>
+          <div class="field"><label for="m-format">Storage <code>format</code></label><select class="select" id="m-format" data-tf="format" ${t.mode === 'factory' ? 'disabled' : dis}>${FORMATS.map(x => `<option${x === t.format ? ' selected' : ''}>${x}</option>`).join('')}</select></div>
+          <div class="field"><label for="m-pattern">Branching <code>pattern</code></label><input class="inp mono" id="m-pattern" data-tf="pattern" value="${esc(t.pattern)}" placeholder="map(regions)" spellcheck="false" autocomplete="off" ${t.mode === 'factory' ? 'disabled' : ro}></div>
         </div>
         <div class="field"><span class="lbl">What would be written</span><pre class="plain" id="m-preview"></pre></div>
         <div class="issues" id="m-issues"></div>
       </div>
     </div>
     <footer class="m-foot">
-      ${M.isNew ? '' : '<button class="btn danger" data-m="remove">Remove target</button>'}
+      ${M.isNew || locked ? '' : '<button class="btn danger" data-m="remove">Remove target</button>'}
       <span class="spacer"></span>
       <span class="help hide-narrow">Writing to files comes with the live connection</span>
       <button class="btn" data-m="cancel">Cancel</button>
@@ -1166,11 +1182,37 @@ function qaSection(id) {
         ${q.self_reviewed ? '<span class="qa-st bad" title="qa_check() fails until someone else reviews it">self-reviewed</span>' : ''}
         ${q.changed_vs_base ? `<span class="help">changed vs <code>${esc(QA.base)}</code></span>` : ''}
         ${q.last_author ? `<span class="help">last changed by ${esc(q.last_author)}</span>` : ''}</div>
+      ${diffHtml(q)}
       ${hist.length ? `<ul class="qa-hist">${hist.slice(0, 4).map(h => `<li class="${h.current ? '' : 'old'}"><b>${esc(h.verdict)}</b> · ${esc(h.reviewer || '?')} · ${fmtDate(h.date)}${h.current ? '' : ' · <i>for an older version</i>'}${h.comment ? ` · <q>${esc(h.comment)}</q>` : ''}</li>`).join('')}${hist.length > 4 ? `<li>${hist.length - 4} older entries</li>` : ''}</ul>` : '<span class="help">No verdict yet.</span>'}
       ${(() => { const call = `pipeworks::qa_review("${q.item}", "correct")`; return `<div class="qa-call"><code>${esc(call)}</code><button class="btn small" data-copy="${esc(call)}">Copy</button></div>`; })()}
     </div>`;
   }).join('');
   return `<section class="qa-sec" id="m-qa"><h3>Review <small>read-only · record verdicts with <code>qa_review()</code></small></h3>${items}</section>`;
+}
+/* Line diff (LCS) of an item against base; unchanged runs longer than 2*CTX lines are cut to their context. */
+function lineDiff(a, b) {
+  const n = a.length, m = b.length, L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { out.push([' ', a[i]]); i++; j++; }
+    else if (j < m && (i === n || L[i][j + 1] >= L[i + 1][j])) out.push(['+', b[j++]]);
+    else out.push(['-', a[i++]]);
+  }
+  return out;
+}
+function diffHtml(q) {
+  if (!q.changed_vs_base || q.text == null) return '';
+  if (q.base_text == null) return `<span class="help">New in this branch (not on <code>${esc(QA.base)}</code>).</span>`;
+  const d = lineDiff(String(q.base_text).split('\n'), String(q.text).split('\n')), CTX = 2, keep = d.map(() => false);
+  d.forEach(([op], k) => { if (op !== ' ') for (let x = Math.max(0, k - CTX); x <= Math.min(d.length - 1, k + CTX); x++) keep[x] = true; });
+  let html = '', gap = false;
+  d.forEach(([op, line], k) => {
+    if (!keep[k]) { if (!gap) html += '<span class="d-gap">⋯</span>'; gap = true; return; }
+    gap = false;
+    html += `<span class="${op === '+' ? 'd-add' : op === '-' ? 'd-del' : 'd-ctx'}">${op} ${esc(line)}</span>`;
+  });
+  return `<div class="lbl">Changes against <code>${esc(QA.base)}</code></div><pre class="qa-diff">${html}</pre>`;
 }
 function copyText(text, msg) {
   const fallback = () => toast(`Copy this: ${text}`);
@@ -1196,8 +1238,9 @@ function saveModal() {
   const box = $('#m-err'); box.hidden = !err; box.textContent = err;
   if (err) return;
   push(M.isNew ? M.before : snap());
-  t.name = t.name.trim();
   const cur = S.targets[M.id];
+  if (M.locked) { ['name', 'description', 'format', 'pattern', 'args'].forEach(k => { t[k] = JSON.parse(JSON.stringify(cur[k])); }); M.deps = deps(M.id); }
+  t.name = t.name.trim();
   let codeChanged = false;
   if (f) {
     f.name = f.name.trim(); f.family = f.family.trim();
@@ -1250,7 +1293,7 @@ modal.addEventListener('click', e => {
   const a = b.dataset.m;
   if (a === 'cancel') closeModal(false);
   else if (a === 'save') saveModal();
-  else if (a === 'remove') { const id = M.id; closeModal(true); removeTarget(id); }
+  else if (a === 'remove') { if (M.locked) return toast(UNFOLD); const id = M.id; closeModal(true); removeTarget(id); }
   else if (a === 'rstudio') { const loc = srcLoc(M.id); closeModal(false); openInRStudio(loc); }
 });
 overlay.addEventListener('pointerdown', e => { if (e.target === overlay) closeModal(false); });

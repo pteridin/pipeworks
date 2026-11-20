@@ -150,10 +150,21 @@ test_that("in a git repository targets and functions carry their QA status", {
   expect_equal(sr$status, "questionable")
   expect_equal(sr$verdict, "questionable")
   expect_false(sr$self_reviewed)
+  expect_equal(s$done, 30)
   expect_length(sr$history, 1)
   expect_match(sr$history[[1]]$comment, "Group by region")
 
   expect_equal(by_name(m$functions, "clean_survey")$qa$status, "changed")
+  # the diff against base: the item's text now and at `main`
+  cs <- by_name(m$functions, "clean_survey")$qa
+  expect_match(cs$text, "age >= 18", fixed = TRUE)
+  expect_false(grepl("age >= 18", cs$base_text, fixed = TRUE))
+  expect_match(cs$base_text, "^clean_survey <- function")
+  # new in this branch: no base text
+  expect_null(cc$base_text)
+  expect_match(cc$text, "channel_counts")
+  # unchanged against base: no texts at all
+  expect_null(fit$text)
   expect_equal(by_name(m$targets, "clean_data")$qa$status, "check_again")
 
   maps <- m$maps

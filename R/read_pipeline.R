@@ -222,6 +222,18 @@ read_qa <- function(path, items) {
   if (is.null(st)) return(none)
   reviews <- read_reviews(path)
   hashes <- stats::setNames(st$hash, st$id)
+  # source text now and at `base` of the items that changed against it (for the diff)
+  changed <- if (is.null(base)) character() else st$id[st$changed_vs_base %in% TRUE]
+  texts <- item_texts(read_source(path)$items, function(f) {
+    full <- file.path(path, f)
+    if (file.exists(full)) readLines(full, warn = FALSE, encoding = "UTF-8")
+  }, changed)
+  base_texts <- if (length(changed)) {
+    tryCatch({
+      bt <- git_tree_texts(path, base, st$file[st$kind == "file"])
+      item_texts(read_source_text(bt)$items, function(f) bt[[f]], changed)
+    }, error = function(e) list())
+  } else list()
   str <- function(x) if (length(x) && !is.na(x)) x else NULL
   record <- function(i) {
     id <- st$id[i]
@@ -241,6 +253,8 @@ read_qa <- function(path, items) {
       self_reviewed = isTRUE(st$self_reviewed[i]),
       last_author = str(st$last_author[i]),
       changed_vs_base = if (is.null(base)) NULL else isTRUE(st$changed_vs_base[i]),
+      text = texts[[id]],
+      base_text = base_texts[[id]],
       history = history
     )
   }
@@ -254,6 +268,18 @@ read_qa <- function(path, items) {
       base = base, branch = if (is.na(branch)) NULL else branch
     )
   )
+}
+
+# Source lines (one string, "\n"-joined) of the items `ids`, by id.
+item_texts <- function(items, lines_of, ids) {
+  items <- items[items$id %in% ids, , drop = FALSE]
+  out <- list()
+  for (i in seq_len(nrow(items))) {
+    lines <- lines_of(items$file[i])
+    if (is.null(lines)) next
+    out[[items$id[i]]] <- paste(lines[items$line1[i]:min(items$line2[i], length(lines))], collapse = "\n")
+  }
+  out
 }
 
 read_source_files <- function(targets) {

@@ -62,6 +62,14 @@ git_file_clean <- function(path, file) {
 # items". Cached per commit in `cache`.
 git_item_hashes <- function(path, commit, extra, cache) {
   if (!is.null(cache[[commit]])) return(cache[[commit]])
+  src <- tryCatch(read_source_text(git_tree_texts(path, commit, extra)), error = function(e) NULL)
+  hashes <- if (is.null(src) || !nrow(src$items)) character() else stats::setNames(src$items$hash, src$items$id)
+  cache[[commit]] <- hashes
+  hashes
+}
+
+# Lines of the code files (and `extra` files) at `commit`, named by path.
+git_tree_texts <- function(path, commit, extra = character()) {
   tree <- git_run(path, c("ls-tree", "-r", "--name-only", commit))
   keep <- tree[grepl("^R/[^/]*\\.[Rr]$", tree) | tree == "_targets.R" | tree %in% extra]
   texts <- list()
@@ -69,10 +77,7 @@ git_item_hashes <- function(path, commit, extra, cache) {
     lines <- git_try(path, c("show", paste0(commit, ":./", f)))
     if (!is.null(lines)) texts[[f]] <- lines
   }
-  src <- tryCatch(read_source_text(texts), error = function(e) NULL)
-  hashes <- if (is.null(src) || !nrow(src$items)) character() else stats::setNames(src$items$hash, src$items$id)
-  cache[[commit]] <- hashes
-  hashes
+  texts
 }
 
 #' Who last changed the hash of each item
