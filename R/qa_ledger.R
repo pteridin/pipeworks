@@ -17,13 +17,13 @@ empty_reviews <- function() {
 
 #' Read all review entries of a project
 #' @param path Project root.
-#' @return Data frame sorted by `date`, zero rows without `qa/reviews/`.
+#' @return Data frame sorted by `date` (then by file-name suffix), zero rows without `qa/reviews/`.
 #' @noRd
 read_reviews <- function(path = ".") {
   files <- list.files(file.path(path, "qa", "reviews"), pattern = "\\.json$", full.names = TRUE)
   if (!length(files)) return(empty_reviews())
   str1 <- function(x) if (is.null(x) || !length(x) || is.na(x[[1]])) NA_character_ else as.character(x[[1]])
-  # same-second entries tie on date: order by file stem, so "x" precedes "x-2"
+  # ties on date (never-overwrite suffixes): order by file stem first, then below
   files <- files[order(sub("\\.json$", "", basename(files)), method = "radix")]
   rows <- lapply(files, function(f) {
     e <- jsonlite::fromJSON(f, simplifyVector = FALSE)
@@ -34,7 +34,15 @@ read_reviews <- function(path = ".") {
     row
   })
   out <- do.call(rbind, rows)
-  out <- out[order(out$date, method = "radix"), , drop = FALSE]
+  # date (second-resolution entries get ".000"), then the numeric `-N` suffix
+  # of the file name, so "x" < "x-2" < "x-10"
+  stems <- sub("\\.json$", "", basename(files))
+  suffix <- vapply(stems, function(s) {
+    if (grepl("-[0-9a-f]{7}-[0-9]+$", s)) as.integer(sub(".*-([0-9]+)$", "\\1", s)) else 1L
+  }, integer(1), USE.NAMES = FALSE)
+  day <- ifelse(is.na(out$date), "", sub("Z$", "", out$date))
+  day <- ifelse(grepl("\\.", day), day, ifelse(nzchar(day), paste0(day, ".000"), day))
+  out <- out[order(day, suffix, method = "radix"), , drop = FALSE]
   rownames(out) <- NULL
   out
 }
@@ -46,7 +54,8 @@ read_reviews <- function(path = ".") {
 write_review <- function(path, entry) {
   dir <- file.path(path, "qa", "reviews")
   dir.create(dir, recursive = TRUE, showWarnings = FALSE)
-  stamp <- format(as.POSIXct(entry$date, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"), "%Y%m%dT%H%M%SZ", tz = "UTC")
+  # "2026-11-20T10:00:00.123Z" -> "20261120T100000123Z" (also for old second-resolution dates)
+  stamp <- gsub("[-:.]", "", entry$date)
   slug <- gsub("[^A-Za-z0-9]", "_", entry$item)
   base <- sprintf("%s-%s-%s", stamp, slug, substr(entry$hash, 1, 7))
   file <- file.path(dir, paste0(base, ".json"))

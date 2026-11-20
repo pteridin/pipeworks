@@ -45,7 +45,7 @@ qa_review <- function(item, verdict = c("correct", "questionable", "wrong"), com
     reviewer_email = who$email,
     author = auth$author_name,
     author_email = auth$author_email,
-    date = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+    date = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
     commit = git_head(path),
     depends = depends
   )

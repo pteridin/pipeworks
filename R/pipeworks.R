@@ -53,24 +53,3 @@ model_json <- function(model) {
   # Keep "</script>" inside strings from closing the tag.
   gsub("</", "<\\/", json, fixed = TRUE)
 }
-
-#' Copy the example survey project
-#'
-#' Copies the small targets project that ships with pipeworks, so you can try
-#' the editor without touching your own pipeline.
-#'
-#' @param dest Folder to copy the project into. It must not exist yet.
-#' @return The path of the copied project, invisibly.
-#' @export
-example_project <- function(dest = file.path(tempdir(), "survey")) {
-  src <- system.file("examples", "survey", package = "pipeworks", mustWork = TRUE)
-  if (dir.exists(dest)) stop(dest, " already exists.", call. = FALSE)
-  dir.create(dest, recursive = TRUE)
-  files <- list.files(src, recursive = TRUE, all.files = TRUE, no.. = TRUE)
-  files <- files[!grepl("^(_targets/|\\.Rproj\\.user/)|^report\\.html$", files)]
-  for (f in files) {
-    dir.create(file.path(dest, dirname(f)), recursive = TRUE, showWarnings = FALSE)
-    file.copy(file.path(src, f), file.path(dest, f))
-  }
-  invisible(normalizePath(dest))
-}

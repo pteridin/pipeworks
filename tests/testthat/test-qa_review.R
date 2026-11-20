@@ -68,3 +68,32 @@ test_that("a missing git identity is refused", {
   withr::local_envvar(GIT_CONFIG_GLOBAL = "/dev/null", GIT_CONFIG_SYSTEM = "/dev/null")
   expect_error(qa_review("f", "correct", path = repo), "git config user.email")
 })
+
+test_that("entries written in quick succession are returned in write order (millisecond dates)", {
+  repo <- local_git_repo(list("R/a.R" = "f <- function(x) x", "_targets.R" = "list(tar_target(t1, f(1)))"))
+  set_git_user(repo, "Bob", "bob@wig2.de")
+  suppressMessages(qa_review("f", "wrong", "first", path = repo))
+  git_cmd(repo, "add", "-A")
+  commit_as(repo, "R/a.R", "f <- function(x) x + 1")
+  suppressMessages(qa_review("f", "questionable", "second", path = repo))
+  commit_as(repo, "R/a.R", "f <- function(x) x + 2")
+  suppressMessages(qa_review("f", "correct", path = repo))
+  r <- read_reviews(repo)
+  expect_equal(r$verdict, c("wrong", "questionable", "correct"))
+  expect_true(all(grepl("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", r$date)))
+  expect_true(all(grepl("^\\d{8}T\\d{9}Z-", list.files(file.path(repo, "qa", "reviews")))))
+})
+
+test_that("same-date entries sort by numeric suffix and old second-resolution entries still parse", {
+  proj <- local_project(list("x" = "y"))
+  entry <- list(item = "function:f", hash = "abcdef1234", verdict = "correct", comment = NA_character_,
+                reviewer = "Bob", reviewer_email = "bob@wig2.de", author = "Ann", author_email = "ann@wig2.de",
+                date = "2026-11-20T10:00:00.500Z", commit = "c0ffee", depends = list())
+  for (i in 1:11) write_review(proj, c(entry[names(entry) != "comment"], comment = paste("n", i)))
+  old <- entry
+  old$date <- "2026-11-20T10:00:00Z"
+  old$comment <- "old"
+  write_review(proj, old)
+  r <- read_reviews(proj)
+  expect_equal(r$comment, c("old", paste("n", 1:11)))
+})
