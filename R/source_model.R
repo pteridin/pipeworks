@@ -7,24 +7,37 @@ TARGET_CALLS <- c(
   "tar_file_read", "tar_force", "tar_change", "tar_age"
 )
 
+# Calls that load R code from files. pipeworks reviews `R/` (what `tar_source()`
+# loads by default) and `_targets.R`; code loaded from anywhere else is never an
+# item, so `qa_check()` fails while such a call exists.
+LOADER_CALLS <- c("source", "sys.source", "tar_source")
+
+# Paths (relative to the project) whose code is parsed: `_targets.R` and every
+# `.R`/`.r` file below `R/` (recursive, like `tar_source()`).
+is_code_file <- function(f) f == "_targets.R" | grepl("^R/.+\\.[Rr]$", f)
+
 #' Read the reviewable items of a targets project from its source files
 #'
-#' Parses `R/*.R` and `_targets.R` without running them and returns one item
-#' per function, target, `tar_map()`, other top-level object and factory source
-#' file (the `.Rmd`/`.qmd` of `tar_render()`/`tar_quarto()`).
+#' Parses every `.R` file below `R/` (recursively, like `tar_source()`) and
+#' `_targets.R` without running them and returns one item per function,
+#' target, `tar_map()`, other top-level object, the rest of each top-level
+#' expression that holds targets, and factory source file (the `.Rmd`/`.qmd`
+#' of `tar_render()`/`tar_quarto()`).
 #'
 #' @param path Root folder of the targets project.
 #' @return A list with `items` (a data frame, one row per item, with the
 #'   columns `id`, `kind`, `name`, `file`, `line1`, `line2`, `hash`, `block`,
-#'   `map`, `fn`, `calls`, `title`) and `files`, the parsed source files.
+#'   `map`, `fn`, `calls`, `title`), `files`, the parsed source files, and
+#'   `external`, the calls that load code from elsewhere (`file`, `line`,
+#'   `call`, `path`).
 #' @noRd
 read_source <- function(path = ".") {
-  r_files <- sort(list.files(file.path(path, "R"), pattern = "\\.[Rr]$"))
-  files <- file.path("R", r_files)
+  r_files <- list.files(file.path(path, "R"), pattern = "\\.[Rr]$", recursive = TRUE, all.files = TRUE)
+  files <- file.path("R", sort(r_files, method = "radix"))
   if (file.exists(file.path(path, "_targets.R"))) files <- c(files, "_targets.R")
   read_lines <- function(f) {
     full <- file.path(path, f)
-    if (file.exists(full) && !dir.exists(full)) readLines(full, warn = FALSE, encoding = "UTF-8")
+    if (file.exists(full) && !dir.exists(full)) read_utf8(full)
   }
   texts <- stats::setNames(lapply(files, read_lines), files)
   build_source(texts, read_lines)
@@ -38,11 +51,18 @@ read_source_text <- function(texts) {
 }
 
 build_source <- function(texts, read_extra) {
-  files <- names(texts)
-  is_code <- function(f) f == "_targets.R" || grepl("^R/", f)
+  files <- names(texts)[is_code_file(names(texts))]
   # Factory sources (.Rmd/.qmd) are only hashed as text, never parsed as R.
-  parsed <- lapply(files[vapply(files, is_code, logical(1))], function(f) parse_source_file(f, texts[[f]], is_r = grepl("^R/", f)))
-  recs <- unlist(parsed, recursive = FALSE)
+  parsed <- lapply(files, function(f) parse_source_file(f, texts[[f]]))
+  resolve_source(parsed, files, read_extra)
+}
+
+# Cross-file step: function calls, map templates and factory source files.
+# `parsed` is a list of `parse_source_file()` results (one per code file), so
+# per-file parses can be cached and reused (see `last_authors()`).
+resolve_source <- function(parsed, files, read_extra) {
+  recs <- unlist(lapply(parsed, `[[`, "recs"), recursive = FALSE)
+  external <- do.call(rbind, c(list(empty_external()), lapply(parsed, `[[`, "external")))
 
   fn_recs <- Filter(function(r) r$kind == "function", recs)
   fn_names <- vapply(fn_recs, `[[`, character(1), "name")
@@ -97,7 +117,20 @@ build_source <- function(texts, read_extra) {
     )
   }
 
-  list(items = items_frame(recs), files = files[vapply(files, is_code, logical(1))])
+  rownames(external) <- NULL
+  list(items = items_frame(recs), files = files, external = external)
+}
+
+empty_external <- function() {
+  data.frame(file = character(), line = integer(), call = character(), path = character(), stringsAsFactors = FALSE)
+}
+
+# "pipeworks cannot review code loaded from <path> (<call>() in <file>:<line>); ..."
+external_messages <- function(external) {
+  sprintf(
+    "pipeworks cannot review code loaded from %s (%s() in %s:%d); move it into R/ (tar_source() loads it from there) or into _targets.R.",
+    external$path, external$call, external$file, external$line
+  )
 }
 
 source_record <- function(kind, name, file, line1, line2, hash, ...) {
@@ -128,29 +161,49 @@ items_frame <- function(recs) {
   items
 }
 
-parse_source_file <- function(file, lines, is_r) {
+# Items of one code file, independent of every other file (the cross-file step
+# is `resolve_source()`). Returns `recs` (item records) and `external` (calls
+# that load code from outside the model).
+parse_source_file <- function(file, lines) {
+  is_r <- grepl("^R/", file)
+  none <- list(recs = list(), external = empty_external())
   exprs <- tryCatch(
-    parse(text = lines, keep.source = TRUE),
+    parse(text = lines, keep.source = TRUE, encoding = "UTF-8"),
     error = function(e) stop("Cannot parse ", file, ": ", conditionMessage(e), call. = FALSE)
   )
   pd <- utils::getParseData(exprs, includeText = NA)
-  if (is.null(pd)) return(list())
+  if (is.null(pd)) return(none)
   kids <- split(pd$id, pd$parent)
   tops <- pd[pd$parent == 0 & pd$token == "expr", ]
   tops <- tops[order(tops$line1, tops$col1), ]
+  # the call expression around a SYMBOL_FUNCTION_CALL (also for pkg::fn)
+  call_of <- function(sym_id) pd$parent[pd$id == pd$parent[pd$id == sym_id]]
 
-  node_hash <- function(id) {
+  # Tokens of `id` without comments and whitespace. Each subtree in `exclude`
+  # counts as one placeholder token, so removing one still changes the hash.
+  node_hash <- function(id, exclude = integer()) {
     ids <- parse_descendants(kids, id)
+    inner <- unlist(lapply(exclude, function(x) setdiff(parse_descendants(kids, x), x)))
+    ids <- setdiff(ids, c(exclude, inner))
+    exclude <- unique(exclude[!exclude %in% inner])  # a template inside a map is part of the map
     rows <- pd[match(ids, pd$id), ]
-    rows <- rows[rows$terminal & rows$token != "COMMENT", ]
-    rows <- rows[order(rows$line1, rows$col1), ]
+    rows <- rows[rows$terminal & rows$token != "COMMENT", c("id", "line1", "col1", "token", "text")]
     long <- rows$token == "STR_CONST" & grepl("^\\[\\d+ chars quoted", rows$text)
     for (i in which(long)) rows$text[i] <- utils::getParseText(pd, rows$id[i])
+    if (length(exclude)) {
+      ex <- pd[match(exclude, pd$id), c("id", "line1", "col1", "token")]
+      rows <- rbind(rows, cbind(ex, text = rep("<item>", nrow(ex))))
+    }
+    rows <- rows[order(rows$line1, rows$col1), ]
     md5_text(paste(rows$text, collapse = " "))
   }
 
   recs <- list()
   seen <- integer()
+  unnamed <- function(head) {
+    seen[head] <<- if (is.na(seen[head])) 1L else seen[[head]] + 1L
+    paste0(head, "#", seen[[head]])
+  }
   for (i in seq_len(nrow(tops))) {
     top <- tops[i, ]
     e <- exprs[[i]]
@@ -168,14 +221,8 @@ parse_source_file <- function(file, lines, is_r) {
     callee <- pd[pd$id %in% ids & pd$token == "SYMBOL_FUNCTION_CALL" &
                    pd$text %in% c(TARGET_CALLS, "tar_map"), ]
     callee <- callee[order(callee$line1, callee$col1), ]
+    oname <- if (!is.na(holder)) holder else unnamed(top_call_name(e))
     if (!nrow(callee)) {
-      head <- if (!is.na(holder)) holder else top_call_name(e)
-      if (is.na(holder)) {
-        seen[head] <- if (is.na(seen[head])) 1L else seen[[head]] + 1L
-        oname <- paste0(head, "#", seen[[head]])
-      } else {
-        oname <- holder
-      }
       recs[[length(recs) + 1L]] <- source_record(
         "object", oname, file, top$line1, top$line2, node_hash(top$id),
         id = paste0("object:", file, ":", oname)
@@ -184,13 +231,14 @@ parse_source_file <- function(file, lines, is_r) {
     }
 
     calls <- lapply(seq_len(nrow(callee)), function(j) {
-      id <- pd$parent[pd$id == pd$parent[pd$id == callee$id[j]]]
+      id <- call_of(callee$id[j])
       cl <- pd[pd$id == id, ]
       list(id = id, fn = callee$text[j], row = cl, call = str2lang(utils::getParseText(pd, id)))
     })
     maps <- Filter(function(x) x$fn == "tar_map", calls)
     targets <- Filter(function(x) x$fn != "tar_map", calls)
 
+    covered <- integer()
     for (x in targets) {
       m <- match_call_args(x$call, if (x$fn %in% c("tar_render", "tar_quarto")) c("name", "path") else c("name", "command"))
       tname <- arg_name(m$name)
@@ -203,6 +251,7 @@ parse_source_file <- function(file, lines, is_r) {
         holder = holder, names = cmd_names,
         source_path = if (is.character(m$path) && length(m$path) == 1) m$path else character()
       )
+      covered <- c(covered, x$id)
     }
     for (x in maps) {
       inside <- parse_descendants(kids, x$id)
@@ -213,15 +262,44 @@ parse_source_file <- function(file, lines, is_r) {
         if (!is.na(tname)) nested <- c(nested, tname)
       }
       args <- as.list(x$call)[-1]
-      unnamed <- if (is.null(names(args))) rep(TRUE, length(args)) else !nzchar(names(args))
-      symbols <- vapply(args[unnamed][vapply(args[unnamed], is.name, logical(1))], as.character, character(1))
+      unnamed_args <- if (is.null(names(args))) rep(TRUE, length(args)) else !nzchar(names(args))
+      symbols <- vapply(args[unnamed_args][vapply(args[unnamed_args], is.name, logical(1))], as.character, character(1))
       recs[[length(recs) + 1L]] <- source_record(
         "map", "", file, x$row$line1, x$row$line2, node_hash(x$id),
         nested = nested, symbols = unname(symbols)
       )
+      covered <- c(covered, x$id)
     }
+    # The rest of the expression: everything outside the recognised target and
+    # map calls (the list around them, unrecognised factories, `name = cmd`
+    # entries, block symbols of a composition). Deleting a target or adding an
+    # unrecognised call changes it.
+    recs[[length(recs) + 1L]] <- source_record(
+      "object", oname, file, top$line1, top$line2, node_hash(top$id, exclude = covered),
+      id = paste0("object:", file, ":", oname)
+    )
   }
-  recs
+  list(recs = recs, external = loader_calls(pd, file, call_of))
+}
+
+# Calls of `source()`, `sys.source()` and `tar_source()` with anything other
+# than the default `R/` folder: code pipeworks never sees.
+loader_calls <- function(pd, file, call_of) {
+  sym <- pd[pd$token == "SYMBOL_FUNCTION_CALL" & pd$text %in% LOADER_CALLS, , drop = FALSE]
+  out <- empty_external()
+  for (j in seq_len(nrow(sym))) {
+    call <- tryCatch(str2lang(utils::getParseText(pd, call_of(sym$id[j]))), error = function(e) NULL)
+    fn <- sym$text[j]
+    arg <- if (is.null(call)) NULL else match_call_args(call, if (fn == "tar_source") "files" else "file")[[if (fn == "tar_source") "files" else "file"]]
+    if (fn == "tar_source") {
+      value <- if (is.call(arg) && identical(arg[[1]], as.name("c"))) unlist(as.list(arg)[-1]) else arg
+      if (is.null(arg) || (is.character(value) && all(sub("/+$", "", value) == "R"))) next
+    }
+    path <- if (is.null(arg)) "an unknown file" else if (is.character(arg)) paste(arg, collapse = ", ")
+      else paste(deparse(arg, width.cutoff = 500L), collapse = " ")
+    out[nrow(out) + 1L, ] <- list(file, sym$line1[j], fn, path)
+  }
+  out
 }
 
 parse_descendants <- function(kids, id) {
@@ -282,6 +360,11 @@ roxygen_title <- function(lines, line) {
   blank <- which(!nzchar(trimws(block)))
   if (length(blank)) block <- block[seq_len(blank[1] - 1L)]
   if (length(block)) paste(trimws(block), collapse = " ") else NA_character_
+}
+
+# Lines of a file as UTF-8, whatever the session locale.
+read_utf8 <- function(file) {
+  readLines(file, warn = FALSE, encoding = "UTF-8")
 }
 
 md5_text <- function(text) {

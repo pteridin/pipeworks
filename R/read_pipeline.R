@@ -14,8 +14,12 @@
 #' static source model) and, for `tar_map()` variants, its `map` (`id`,
 #' `template`, `variant`); `maps` lists the maps with their templates,
 #' variants and a colour index. In a git repository with commits every target
-#' and function gets its review status (`qa`, see [qa_status()]) and the model
-#' a `qa_summary`; outside git both are `NULL`.
+#' and function gets its review status (`qa`, see [qa_status()]; a factory
+#' target also `qa_file`, the status of its report source) and the model a
+#' `qa_summary` (`total`, `done` = items passing [qa_check()], `open`, `wrong`,
+#' `check_again` and `outside`, the items without a box on the canvas);
+#' outside git both are `NULL`. The git history is not read: the last author
+#' shown comes from the review entries.
 #'
 #' @return A `pipeworks_model`: a list with `project`, `targets`, `functions`,
 #'   `edges`, `blocks`, `maps`, `qa_summary` and `files`.
@@ -73,7 +77,9 @@ read_pipeline <- function(path = ".", status = TRUE) {
       branches = if (!is.na(row$pattern) && row$name %in% names(branches)) branches[[row$name]] else NULL,
       block = placed$block[[i]],
       map = placed$map[[i]],
-      qa = qa$item(target_item(row$name, placed$map[[i]]))
+      qa = qa$item(target_item(row$name, placed$map[[i]])),
+      # the report source of a factory target (`file:report.Rmd`) belongs to its box
+      qa_file = if (length(call$source) && !is.na(call$source)) qa$item(paste0("file:", call$source))
     )
   })
   names(targets) <- target_names
@@ -85,6 +91,18 @@ read_pipeline <- function(path = ".", status = TRUE) {
   for (i in seq_along(maps)) maps[[i]]["qa"] <- list(qa$item(maps[[i]]$id))
   blocks <- unique(stats::na.omit(unlist(placed$block)))
   blocks <- c(sort(blocks[grepl("^R/", blocks)]), blocks[!grepl("^R/", blocks)])
+
+  # Review items without a box on the canvas: objects, rest items of blocks,
+  # functions no target runs, report sources of no factory target.
+  if (!is.null(qa$summary)) {
+    boxed <- unique(c(
+      vapply(targets, function(t) t$qa$item %||% NA_character_, character(1)),
+      vapply(targets, function(t) t$qa_file$item %||% NA_character_, character(1)),
+      paste0("function:", unlist(lapply(targets, `[[`, "fn"))),
+      vapply(maps, `[[`, character(1), "id")
+    ))
+    qa$summary$outside <- qa$outside(boxed)
+  }
 
   model <- list(
     project = basename(path),
@@ -215,7 +233,8 @@ read_qa <- function(path, items) {
       break
     }
   }
-  st <- tryCatch(qa_status(path, base = base), error = function(e) {
+  # no git history walk: the last author shown comes from review entries only
+  st <- tryCatch(qa_status(path, base = base, authors = FALSE), error = function(e) {
     warning("Cannot read the QA status: ", conditionMessage(e), call. = FALSE)
     NULL
   })
@@ -235,6 +254,7 @@ read_qa <- function(path, items) {
     }, error = function(e) list())
   } else list()
   str <- function(x) if (length(x) && !is.na(x)) x else NULL
+  pass <- qa_passing(st)
   record <- function(i) {
     id <- st$id[i]
     hist <- reviews[reviews$item == id, , drop = FALSE]
@@ -251,6 +271,8 @@ read_qa <- function(path, items) {
       date = str(st$date[i]),
       comment = str(st$comment[i]),
       self_reviewed = isTRUE(st$self_reviewed[i]),
+      authorship_unknown = is.na(st$self_reviewed[i]),
+      passing = pass[i],
       last_author = str(st$last_author[i]),
       changed_vs_base = if (is.null(base)) NULL else isTRUE(st$changed_vs_base[i]),
       text = texts[[id]],
@@ -259,12 +281,22 @@ read_qa <- function(path, items) {
     )
   }
   recs <- stats::setNames(lapply(seq_len(nrow(st)), record), st$id)
-  done <- sum(st$status %in% c("correct", "questionable") & !st$self_reviewed)
+  # done = passes qa_check(); check again passes and is only a hint
+  done <- sum(pass)
   wrong <- sum(st$status == "wrong")
+  outside <- function(boxed) {
+    rows <- which(!st$id %in% boxed)
+    lapply(rows, function(i) list(
+      item = st$id[i], kind = st$kind[i], file = st$file[i], line1 = st$line1[i], line2 = st$line2[i],
+      status = st$status[i], passing = pass[i]
+    ))
+  }
   list(
     item = function(id) recs[[id]],
+    outside = outside,
     summary = list(
       total = nrow(st), done = done, open = nrow(st) - done - wrong, wrong = wrong,
+      check_again = sum(pass & st$status == "check_again"),
       base = base, branch = if (is.na(branch)) NULL else branch
     )
   )
@@ -283,7 +315,8 @@ item_texts <- function(items, lines_of, ids) {
 }
 
 read_source_files <- function(targets) {
-  paths <- c("_targets.R", sort(list.files("R", pattern = "\\.[Rr]$", full.names = TRUE)))
+  r_files <- list.files("R", pattern = "\\.[Rr]$", recursive = TRUE, all.files = TRUE)
+  paths <- c("_targets.R", file.path("R", sort(r_files, method = "radix")))
   sources <- unlist(lapply(targets, function(t) t$source))
   paths <- unique(c(paths, sources[file.exists(sources)]))
   lapply(paths, function(p) list(path = p, text = paste(readLines(p, warn = FALSE, encoding = "UTF-8"), collapse = "\n")))
@@ -304,7 +337,8 @@ print.pipeworks_model <- function(x, ...) {
   if (length(x$maps)) cat("  maps: ", paste(vapply(x$maps, `[[`, character(1), "id"), collapse = ", "), "\n", sep = "")
   if (!is.null(x$qa_summary)) {
     s <- x$qa_summary
-    cat("  QA: ", s$done, " of ", s$total, " done, ", s$open, " open", if (s$wrong) paste0(", ", s$wrong, " wrong"), "\n", sep = "")
+    cat("  QA: ", s$done, " of ", s$total, " done, ", s$open, " open", if (s$wrong) paste0(", ", s$wrong, " wrong"),
+        if (s$check_again) paste0(", ", s$check_again, " check again"), "\n", sep = "")
   }
   invisible(x)
 }

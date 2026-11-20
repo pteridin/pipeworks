@@ -1,6 +1,7 @@
 #' Read the documented functions of a targets project
 #'
-#' Parses every `.R` file in the project's `R/` folder and returns one record
+#' Parses every `.R` file below the project's `R/` folder (recursively, like
+#' `tar_source()`) and returns one record
 #' per top-level function definition (`name <- function(...)`), combined with
 #' its roxygen block if it has one. Nothing is sourced or evaluated.
 #'
@@ -12,15 +13,14 @@
 #' @family readers
 #' @export
 read_functions <- function(path = ".") {
-  dir <- file.path(path, "R")
-  files <- sort(list.files(dir, pattern = "\\.[Rr]$", full.names = TRUE))
-  fns <- unlist(lapply(files, read_functions_file, root = path), recursive = FALSE)
+  rel <- list.files(file.path(path, "R"), pattern = "\\.[Rr]$", recursive = TRUE, all.files = TRUE)
+  rel <- file.path("R", sort(rel, method = "radix"))
+  fns <- unlist(lapply(rel, function(f) read_functions_file(file.path(path, f), rel = f)), recursive = FALSE)
   if (is.null(fns)) fns <- list()
   link_function_calls(fns)
 }
 
-read_functions_file <- function(file, root) {
-  rel <- file.path("R", basename(file))
+read_functions_file <- function(file, rel) {
   lines <- readLines(file, warn = FALSE, encoding = "UTF-8")
   exprs <- parse(file, keep.source = TRUE, encoding = "UTF-8")
   refs <- attr(exprs, "srcref")

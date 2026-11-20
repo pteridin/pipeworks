@@ -11,16 +11,27 @@ status_levels <- c("unreviewed", "changed", "check_again", "correct", "questiona
 #' `correct` verdict whose recorded callee hashes (`depends`) no longer match is
 #' `check_again` (a hint, not a reset). `self_reviewed` flags a matching entry
 #' whose reviewer is the person who wrote the code (compared by the emails
-#' stored in the entry, mapped through `qa/people`).
+#' stored in the entry, case-insensitively and mapped through `qa/people`); it
+#' is `NA` ("authorship unknown") when the entry lacks either email.
+#'
+#' An item is *done* when it passes [qa_check()]: `correct`, `check_again` or
+#' (when allowed) `questionable`, reviewed by someone other than its last
+#' author, with both known.
 #'
 #' @param path Project root.
 #' @param base Optional git ref (e.g. `"main"`). Adds `changed_vs_base`: whether
 #'   the item's hash differs from (or is missing at) that ref.
 #' @param orphans If `TRUE`, return the review entries whose item no longer
 #'   exists instead.
-#' @return A data frame of class `pipeworks_qa_status`.
+#' @param authors If `FALSE`, skip reading the git history: `last_author` then
+#'   comes from the matching review entry only (`NA` for unreviewed or changed
+#'   items). The status itself never needs the history.
+#' @return A data frame of class `pipeworks_qa_status`. Its attribute
+#'   `external` lists calls that load code from outside `R/` and `_targets.R`
+#'   (`source()`, `sys.source()`, `tar_source()` of another folder): code
+#'   pipeworks cannot review, which makes [qa_check()] fail.
 #' @export
-qa_status <- function(path = ".", base = NULL, orphans = FALSE) {
+qa_status <- function(path = ".", base = NULL, orphans = FALSE, authors = TRUE) {
   src <- read_source(path)
   items <- src$items
   reviews <- read_reviews(path)
@@ -49,14 +60,14 @@ qa_status <- function(path = ".", base = NULL, orphans = FALSE) {
             ifelse(!matches, "changed",
             ifelse(stale_dep & e$verdict == "correct", "check_again", e$verdict)))
 
-  self_reviewed <- matches & !is.na(e$reviewer_email) & !is.na(e$author_email) &
-    person_of(e$reviewer_email, people) == person_of(e$author_email, people)
-  self_reviewed[is.na(self_reviewed)] <- FALSE
+  # NA when the entry cannot tell (missing reviewer or author email): fails closed
+  self_reviewed <- rep(FALSE, n)
+  self_reviewed[matches] <- person_of(e$reviewer_email[matches], people) == person_of(e$author_email[matches], people)
 
   # last author: from the matching entry when reviewed, else from git
   last_author <- ifelse(matches, e$author, NA_character_)
   need <- !matches
-  if (any(need)) {
+  if (isTRUE(authors) && any(need)) {
     la <- last_authors(path, items[need, , drop = FALSE])
     last_author[need] <- la$author_name
   }
@@ -81,6 +92,7 @@ qa_status <- function(path = ".", base = NULL, orphans = FALSE) {
   out$last_author <- last_author
   out$changed_vs_base <- changed_vs_base
   rownames(out) <- NULL
+  attr(out, "external") <- src$external
   class(out) <- c("pipeworks_qa_status", "data.frame")
   out
 }
@@ -88,46 +100,72 @@ qa_status <- function(path = ".", base = NULL, orphans = FALSE) {
 #' @export
 print.pipeworks_qa_status <- function(x, ...) {
   counts <- table(factor(x$status, levels = status_levels))
-  cat("QA status: ", nrow(x), " items\n", sep = "")
+  cat("QA status: ", nrow(x), " items, ", sum(qa_passing(x)), " done\n", sep = "")
   cat(paste0("  ", format(names(counts)), "  ", counts, collapse = "\n"), "\n", sep = "")
-  if (any(x$self_reviewed)) cat("  self-reviewed: ", sum(x$self_reviewed), "\n", sep = "")
-  open <- x[x$status != "correct" | x$self_reviewed, , drop = FALSE]
-  if (nrow(open)) {
-    cat("\nNot passing:\n")
-    cat(sprintf("  %-12s %s%s", open$status, open$id, ifelse(open$self_reviewed, " (self-reviewed)", "")), sep = "\n")
+  if (any(x$self_reviewed %in% TRUE)) cat("  self-reviewed: ", sum(x$self_reviewed %in% TRUE), "\n", sep = "")
+  if (anyNA(x$self_reviewed)) cat("  authorship unknown: ", sum(is.na(x$self_reviewed)), "\n", sep = "")
+  show <- function(title, rows) {
+    if (!any(rows)) return()
+    cat("\n", title, ":\n", sep = "")
+    cat(sprintf("  %-12s %s%s", x$status[rows], x$id[rows], who_note(x$self_reviewed[rows])), sep = "\n")
+  }
+  pass <- qa_passing(x)
+  show("Not passing", !pass)
+  show("Check again (passes)", pass & x$status == "check_again")
+  show("Questionable (passes, with doubt)", pass & x$status == "questionable")
+  ext <- attr(x, "external")
+  if (!is.null(ext) && nrow(ext)) {
+    cat("\nWarning:\n")
+    cat(paste0("  ", external_messages(ext)), sep = "\n")
   }
   invisible(x)
 }
 
+# " (self-reviewed)", " (authorship unknown)" or "" per item.
+who_note <- function(self_reviewed) {
+  ifelse(is.na(self_reviewed), " (authorship unknown)", ifelse(self_reviewed, " (self-reviewed)", ""))
+}
+
+# The one definition of "done": the item passes `qa_check()`.
+qa_passing <- function(st, allow_questionable = TRUE) {
+  st$status %in% c("correct", "check_again", if (allow_questionable) "questionable") & st$self_reviewed %in% FALSE
+}
+
 #' CI gate: fail while items are not properly reviewed
 #'
-#' Passes only if every item is `correct` (or `questionable`, when allowed) and
-#' none is self-reviewed. `check_again` items are listed but never fail.
+#' Passes only if every item is `correct` (or `questionable`, when allowed),
+#' none is self-reviewed and every reviewed item's authorship is known, and no
+#' code is loaded from outside `R/` and `_targets.R`. `check_again` items are
+#' listed but never fail. The check never needs the git history.
 #'
 #' @param path Project root.
 #' @param allow_questionable Whether `questionable` verdicts pass.
 #' @return The status table, invisibly. Signals an error on failure.
 #' @export
 qa_check <- function(path = ".", allow_questionable = TRUE) {
-  st <- qa_status(path)
+  st <- qa_status(path, authors = FALSE)
   s <- as.character(st$status)
   bad <- list(
     unreviewed = s == "unreviewed",
     changed = s == "changed",
     wrong = s == "wrong",
     questionable = if (allow_questionable) rep(FALSE, length(s)) else s == "questionable",
-    `self-reviewed` = st$self_reviewed
+    `self-reviewed` = st$self_reviewed %in% TRUE,
+    `authorship unknown` = is.na(st$self_reviewed)
   )
   counts <- vapply(bad, sum, integer(1))
+  ext <- attr(st, "external")
   again <- st$id[s == "check_again"]
   if (length(again)) {
     message("Note: callees changed since review, check again: ", paste(again, collapse = ", "))
   }
-  if (any(counts > 0)) {
-    failing <- Reduce(`|`, bad)
-    lines <- sprintf("  %s: %s", ifelse(st$self_reviewed, paste0(s, ", self-reviewed"), s), st$id)[failing]
+  failing <- !qa_passing(st, allow_questionable)
+  if (any(failing) || nrow(ext)) {
+    note <- ifelse(is.na(st$self_reviewed), ", authorship unknown", ifelse(st$self_reviewed, ", self-reviewed", ""))
+    lines <- sprintf("  %s%s: %s", s, note, st$id)[failing]
+    counts <- c(counts, `unreviewable code source` = nrow(ext))
     stop("QA check failed: ", paste(counts[counts > 0], names(counts)[counts > 0], collapse = ", "),
-         "\n", paste(lines, collapse = "\n"), call. = FALSE)
+         "\n", paste(c(paste0("  ", external_messages(ext)), lines), collapse = "\n"), call. = FALSE)
   }
   message("\u2714 QA check passed: ", nrow(st), " items reviewed")
   invisible(st)

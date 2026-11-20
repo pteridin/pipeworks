@@ -92,9 +92,11 @@ read_people <- function(path = ".") {
   if (length(rows)) do.call(rbind, rows) else none
 }
 
-#' Person name for an email (the email itself when unmapped)
+#' Person name for an email (the lower-case email itself when unmapped, so
+#' `Ann@X.org` and `ann@x.org` are the same person; `NA` stays `NA`)
 #' @noRd
 person_of <- function(email, people) {
-  hit <- people$person[match(tolower(email), people$email)]
+  email <- tolower(email)
+  hit <- people$person[match(email, people$email)]
   ifelse(is.na(hit), email, hit)
 }

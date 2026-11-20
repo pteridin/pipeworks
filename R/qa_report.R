@@ -160,11 +160,7 @@ report_data <- function(path = ".", ref = NULL, signatures = FALSE, title = NULL
 # (modified, staged or untracked). Output files elsewhere in the project do not count.
 has_uncommitted <- function(path, st) {
   if (is.na(git_head(path))) return(FALSE)
-  specs <- c("R", "_targets.R", "qa", st$file[st$kind == "file"])
-  specs <- unique(specs[file.exists(file.path(path, specs))])
-  if (!length(specs)) return(FALSE)
-  out <- git_try(path, c("status", "--porcelain", "--untracked-files=all", "--", specs))
-  length(out) > 0
+  length(git_dirty(path, c("R", "_targets.R", "qa", st$file[st$kind == "file"]))) > 0
 }
 
 # Block-level dependencies `from -> to` (the block that is used, the block that

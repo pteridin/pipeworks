@@ -14,7 +14,9 @@ test_that("functions, targets, maps and objects are found", {
   s <- read_source(dir)
   expect_setequal(s$items$id, c(
     "function:clean_cs", "object:R/cohort.R:AGE_MIN", "target:cs", "map:fit", "target:fit",
-    "object:_targets.R:library#1", "object:_targets.R:tar_source#1", "object:_targets.R:list#1"
+    "object:_targets.R:library#1", "object:_targets.R:tar_source#1", "object:_targets.R:list#1",
+    # rest items: what a block holds besides its targets and maps
+    "object:R/cohort.R:pipeline_cohort", "object:_targets.R:mapped"
   ))
   expect_equal(s$items$fn[s$items$id == "target:cs"], "clean_cs")
   expect_equal(s$items$map[s$items$id == "target:fit"], "map:fit")
@@ -61,7 +63,8 @@ test_that("namespaced calls, descriptions, calls between functions and bare targ
   expect_equal(it$fn[it$id == "target:a"], "f")
   expect_true(is.na(it$fn[it$id == "target:b"]))
   expect_true(is.na(it$map[it$id == "target:a"]))
-  expect_false("object:_targets.R:list#1" %in% it$id)
+  # the list around the targets is a rest item
+  expect_true("object:_targets.R:list#1" %in% it$id)
 })
 
 test_that("tar_render hashes the source file when its text is available", {

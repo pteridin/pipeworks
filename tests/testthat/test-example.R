@@ -6,7 +6,9 @@ test_that("example with git gives a realistic review round", {
 
   st <- qa_status(repo, base = "main")
   open <- st$id[st$status %in% c("unreviewed", "changed")]
-  expect_setequal(open, c("function:clean_survey", "function:count_by_channel", "target:channel_counts"))
+  expect_setequal(open, c("function:clean_survey", "function:count_by_channel", "target:channel_counts",
+                         # the new target changes the rest of its block
+                         "object:R/report.R:pipeline_report"))
   # pipeline lists are not items (their targets are), and target:clean_data only
   # gets a non-blocking note because its callee changed
   expect_equal(st$id[st$status == "check_again"], "target:clean_data")

@@ -1,7 +1,9 @@
 #' Record a review verdict for an item
 #'
 #' Writes one JSON file to `qa/reviews/`. Commit it so the verdict travels with
-#' the branch. Verdicts are only possible for committed code.
+#' the branch. Verdicts are only possible for committed code: every code file
+#' (`R/`, `_targets.R`, report sources) must be committed, and the item's last
+#' author must be known from the git history.
 #'
 #' @param item Full item id (e.g. `"function:clean_cs"`) or a unique name.
 #' @param verdict `"correct"`, `"questionable"` or `"wrong"`.
@@ -23,6 +25,13 @@ qa_review <- function(item, verdict = c("correct", "questionable", "wrong"), com
   if (!git_file_clean(path, row$file)) {
     stop("Commit ", row$file, " first: ", row$id, " has uncommitted changes.", call. = FALSE)
   }
+  # An item can depend on other files (callees, map templates), so the whole
+  # code tree must be committed before a verdict names a code version.
+  dirty <- uncommitted_code(path, items)
+  if (length(dirty)) {
+    stop("Commit ", paste(dirty, collapse = ", "), " first: verdicts are only recorded for committed code, ",
+         "and ", row$id, " may depend on it.", call. = FALSE)
+  }
 
   who <- git_user(path)
   if (is.na(who$email) || is.na(who$name)) {
@@ -36,6 +45,10 @@ qa_review <- function(item, verdict = c("correct", "questionable", "wrong"), com
   depends <- if (length(dep_ids)) as.list(hashes[dep_ids]) else structure(list(), names = character())
 
   auth <- last_authors(path, items[items$id == row$id, , drop = FALSE])
+  if (is.na(auth$author_email)) {
+    stop("Cannot tell who last changed ", row$id, " from the git history, so the four-eyes rule cannot be ",
+         "checked. Commit every file it depends on (and make sure git does not ignore them).", call. = FALSE)
+  }
   entry <- list(
     item = row$id,
     hash = row$hash,

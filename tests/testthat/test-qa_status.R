@@ -2,9 +2,11 @@ test_that("status follows hash changes, callee changes and self-review", {
   repo <- local_git_repo(list("R/a.R" = c("h <- function(x) x", "f <- function(x) h(x)"),
                               "_targets.R" = "list(tar_target(t1, f(1)))"), author = c("Ann", "ann@wig2.de"))
   set_git_user(repo, "Bob", "bob@wig2.de")
-  for (i in c("function:h", "function:f", "target:t1")) suppressMessages(qa_review(i, "correct", path = repo))
+  for (i in c("function:h", "function:f", "target:t1", "object:_targets.R:list#1")) {
+    suppressMessages(qa_review(i, "correct", path = repo))
+  }
   expect_true(all(qa_status(repo)$status == "correct"))
-  expect_message(qa_check(repo), "QA check passed: 3 items reviewed")
+  expect_message(qa_check(repo), "QA check passed: 4 items reviewed")
   commit_as(repo, "R/a.R", c("h <- function(x) x * 2", "f <- function(x) h(x)"), author = c("Ann", "ann@wig2.de"))
   st <- qa_status(repo)
   expect_equal(st$status[st$id == "function:h"], "changed")
@@ -21,8 +23,9 @@ test_that("status follows hash changes, callee changes and self-review", {
 test_that("unreviewed, wrong and questionable are gated", {
   repo <- local_git_repo(list("R/a.R" = c("h <- function(x) x", "f <- function(x) x"), "_targets.R" = "list(tar_target(t1, f(1)))"))
   set_git_user(repo, "Bob", "bob@wig2.de")
-  expect_error(qa_check(repo), "QA check failed: 3 unreviewed")
+  expect_error(qa_check(repo), "QA check failed: 4 unreviewed")
   suppressMessages({
+    qa_review("object:_targets.R:list#1", "correct", path = repo)
     qa_review("h", "questionable", "hm", path = repo)
     qa_review("f", "correct", path = repo)
     qa_review("t1", "correct", path = repo)

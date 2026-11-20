@@ -131,8 +131,10 @@ test_that("in a git repository targets and functions carry their QA status", {
   expect_equal(s$branch, "dev/sample-definition")
   expect_equal(s$open + s$done + s$wrong, s$total)
   expect_equal(s$wrong, 0)
-  # 3 open items + target:clean_data (check again)
+  # 3 open items + the rest of R/report.R (a target was added to the list);
+  # target:clean_data is check again, which passes
   expect_equal(s$open, 4)
+  expect_equal(s$check_again, 1)
 
   cc <- by_name(m$targets, "channel_counts")$qa
   expect_equal(cc$item, "target:channel_counts")
@@ -150,7 +152,7 @@ test_that("in a git repository targets and functions carry their QA status", {
   expect_equal(sr$status, "questionable")
   expect_equal(sr$verdict, "questionable")
   expect_false(sr$self_reviewed)
-  expect_equal(s$done, 30)
+  expect_equal(s$done, 36)
   expect_length(sr$history, 1)
   expect_match(sr$history[[1]]$comment, "Group by region")
 

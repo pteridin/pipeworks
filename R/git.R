@@ -56,7 +56,22 @@ git_file_clean <- function(path, file) {
   !is.null(st) && length(st) == 0
 }
 
-# Hash of every item (named by id) of the code tree at `commit`: all `R/*.R`,
+# Paths below `specs` (relative to `path`) that are modified, staged or
+# untracked; `character()` when clean (or outside git).
+git_dirty <- function(path, specs) {
+  specs <- unique(specs[file.exists(file.path(path, specs))])
+  if (!length(specs)) return(character())
+  out <- git_try(path, c("status", "--porcelain", "--untracked-files=all", "--", specs))
+  sub("^.. ", "", out)
+}
+
+# Uncommitted code files of the project: `R/`, `_targets.R` and the factory
+# sources (`file` items) of `items`.
+uncommitted_code <- function(path, items) {
+  git_dirty(path, c("R", "_targets.R", items$file[items$kind == "file"]))
+}
+
+# Hash of every item (named by id) of the code tree at `commit`: all `R/**.R`,
 # `_targets.R` and the factory source files `extra`, relative to `path` (which
 # may be below the repo root). A version that does not parse counts as "no
 # items". Cached per commit in `cache`.
@@ -71,7 +86,7 @@ git_item_hashes <- function(path, commit, extra, cache) {
 # Lines of the code files (and `extra` files) at `commit`, named by path.
 git_tree_texts <- function(path, commit, extra = character()) {
   tree <- git_run(path, c("ls-tree", "-r", "--name-only", commit))
-  keep <- tree[grepl("^R/[^/]*\\.[Rr]$", tree) | tree == "_targets.R" | tree %in% extra]
+  keep <- tree[is_code_file(tree) | tree %in% extra]
   texts <- list()
   for (f in sort(keep)) {
     lines <- git_try(path, c("show", paste0(commit, ":./", f)))
@@ -110,7 +125,9 @@ last_authors <- function(path, items) {
   parts <- strsplit(log, "\x1f", fixed = TRUE)
   shas <- vapply(parts, `[`, character(1), 1)
   field <- function(i) vapply(parts, function(p) if (length(p) >= i) p[i] else "", character(1))
-  meta <- list(name = field(2), email = field(3), parents = strsplit(field(4), " ", fixed = TRUE))
+  email <- field(3)
+  meta <- list(name = field(2), email = ifelse(nzchar(email), email, NA_character_),
+               parents = strsplit(field(4), " ", fixed = TRUE))
   idx <- function(sha) match(sha, shas)
 
   extra <- items$file[items$kind == "file"]
