@@ -1,11 +1,8 @@
 <title>Pipeworks Editor</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta charset="utf-8">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap">
 <style>
-/* Layout: two-pane workbench. Families, helpers and checks | wiring canvas with @family boxes and the source files. Editing happens in a modal. */
+/* Layout: two-pane workbench. Blocks, maps, helpers and checks | wiring canvas with one box per block (file) and the source files. Editing happens in a modal. */
 :root {
   --bg: #e7ecea;
   --panel: #fbfcfc;
@@ -27,9 +24,9 @@
   --scrim: rgb(14 24 22 / .42);
   --shadow: 0 1px 2px rgb(20 40 36 / .08), 0 4px 14px rgb(20 40 36 / .06);
   --shadow-lg: 0 10px 40px rgb(10 25 22 / .22);
-  --f-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --f-head: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
-  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --f-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-head: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -149,11 +146,11 @@ svg.edges { position: absolute; left: -5000px; top: -5000px; width: 10000px; hei
 @keyframes flow { to { stroke-dashoffset: -12; } }
 
 .group {
+  --gc: var(--accent);
   position: absolute; left: 0; top: 0; border-radius: 12px;
   background: color-mix(in srgb, var(--gc) 6%, transparent);
   border: 1.5px solid color-mix(in srgb, var(--gc) 32%, transparent);
 }
-.group.drop { border-style: dashed; border-color: var(--gc); background: color-mix(in srgb, var(--gc) 13%, transparent); }
 .g-label {
   position: absolute; left: 12px; top: 7px; display: inline-flex; gap: 7px; align-items: baseline; cursor: move;
   font-size: 13px; font-weight: 700; color: var(--gc); white-space: nowrap; padding: 1px 4px; border-radius: 5px;
@@ -186,11 +183,11 @@ svg.edges { position: absolute; left: -5000px; top: -5000px; width: 10000px; hei
 .n-foot { display: flex; gap: 5px; margin-top: 7px; flex-wrap: wrap; }
 .chip { font-family: var(--f-mono); font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--soft); color: var(--muted); }
 .chip.warn { font-family: var(--f-ui); font-weight: 600; background: var(--warn-bg); color: var(--warn-fg); }
-.port { position: absolute; top: 13px; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); border: 2.5px solid var(--gc); }
+.port { position: absolute; top: 13px; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); border: 2.5px solid var(--mc, var(--accent)); }
 .port-in { left: -8px; }
 .port-out { right: -8px; cursor: crosshair; }
 .port-out::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; }
-.port-out:hover { background: var(--gc); transform: scale(1.2); }
+.port-out:hover { background: var(--mc, var(--accent)); transform: scale(1.2); }
 .g-1 { --gc: var(--g1); } .g-2 { --gc: var(--g2); } .g-3 { --gc: var(--g3); } .g-4 { --gc: var(--g4); } .g-5 { --gc: var(--g5); } .g-6 { --gc: var(--g6); } .g-0 { --gc: var(--g0); }
 .status-uptodate { --sc: var(--s-ok); } .status-outdated { --sc: var(--s-out); } .status-errored { --sc: var(--s-err); } .status-new { --sc: var(--s-new); } .status-running { --sc: var(--accent); }
 
@@ -318,6 +315,52 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 .helper span { font-size: 11.5px; color: var(--muted); }
 .nodata { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: var(--bg); z-index: 50; }
 .nodata h1 { font-family: var(--f-head); margin: 0 0 8px; }
+
+/* Maps: one colour per tar_map() (mc-1..6 from the --g palette), stacked cards while folded */
+.mc-1 { --mc: var(--g1); } .mc-2 { --mc: var(--g2); } .mc-3 { --mc: var(--g3); } .mc-4 { --mc: var(--g4); } .mc-5 { --mc: var(--g5); } .mc-6 { --mc: var(--g6); }
+.node.stack { border-color: var(--mc); box-shadow: 4px 4px 0 -1px var(--panel), 4px 4px 0 0 var(--mc), 8px 8px 0 -1px var(--panel), 8px 8px 0 0 var(--mc), var(--shadow); }
+.node.stack.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 4px 4px 0 -1px var(--panel), 4px 4px 0 0 var(--mc), 8px 8px 0 -1px var(--panel), 8px 8px 0 0 var(--mc); }
+.node.mapped:not(.stack) { border-color: color-mix(in srgb, var(--mc) 55%, var(--line)); }
+.mpill {
+  position: absolute; top: -10px; right: 10px; z-index: 1; height: 19px; padding: 0 9px; border: 0; border-radius: 99px; cursor: pointer;
+  background: var(--mc); color: var(--panel); font-family: var(--f-ui); font-size: 11px; font-weight: 700; line-height: 19px; white-space: nowrap;
+}
+.mpill:hover { filter: brightness(1.1); }
+.map-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.map-row .mpill { position: static; }
+.map-row code { color: var(--fg); }
+.sb-count { margin-left: auto; color: var(--muted); font-weight: 400; font-family: var(--f-mono); font-size: 11px; }
+.t-item .x { font-family: var(--f-ui); font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 99px; background: var(--mc); color: var(--panel); }
+
+/* QA overlay (read-only): orange = needs review, dashed = check again, red = wrong/questionable, greyed = correct */
+.qa-bar { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel); }
+.qa-bar b { color: var(--fg); font-family: var(--f-mono); font-weight: 600; }
+.qa-prog { display: inline-flex; width: 120px; height: 8px; border-radius: 99px; overflow: hidden; background: var(--soft); }
+.qa-prog i { display: block; height: 100%; }
+.qa-toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.qa-on .node.qa-todo { border: 2px solid var(--s-out); box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-out) 20%, transparent), var(--shadow); }
+.qa-on .node.stack.qa-todo { box-shadow: 4px 4px 0 -1px var(--panel), 4px 4px 0 0 var(--mc), 8px 8px 0 -1px var(--panel), 8px 8px 0 0 var(--mc), 0 0 0 3px color-mix(in srgb, var(--s-out) 20%, transparent); }
+.qa-on .node.qa-again { border: 2px dashed var(--s-out); }
+.qa-on .node.qa-bad { border: 2px solid var(--s-err); }
+.qa-on .node.qa-ok:not(.sel) { opacity: .5; }
+.qa-on .node.qa-ok.dim { opacity: .25; }
+.qa-on .node.sel { outline: 3px solid var(--accent); outline-offset: 3px; }
+.qa-tag { display: none; position: absolute; top: -9px; left: 10px; z-index: 1; padding: 0 7px; border-radius: 99px; font-size: 10px; font-weight: 700; line-height: 17px; color: var(--panel); background: var(--s-out); white-space: nowrap; }
+.qa-on .qa-tag { display: block; }
+.qa-tag.bad { background: var(--s-err); }
+.qa-sec { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); }
+.qa-item { display: flex; flex-direction: column; gap: 4px; }
+.qa-item + .qa-item { border-top: 1px solid var(--line); padding-top: 8px; }
+.qa-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
+.qa-st { font-size: 11px; font-weight: 700; padding: 0 7px; border-radius: 99px; line-height: 18px; background: var(--soft); color: var(--muted); }
+.qa-st.todo, .qa-st.again { background: var(--warn-bg); color: var(--warn-fg); }
+.qa-st.bad { background: color-mix(in srgb, var(--s-err) 16%, transparent); color: var(--s-err); }
+.qa-st.ok { background: color-mix(in srgb, var(--s-ok) 16%, transparent); color: var(--s-ok); }
+.qa-hist { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.qa-hist li.old { opacity: .7; }
+.qa-hist q { color: var(--fg); }
+.qa-call { display: flex; gap: 6px; align-items: center; }
+.qa-call code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 4px 8px; border-radius: 6px; background: var(--code-bg); border: 1px solid var(--line); }
 </style>
 
 <div class="app">
@@ -332,10 +375,11 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
     </div>
     <span class="session" id="session" title="Run pipeworks::pipeworks() again to refresh"></span>
     <span class="dirty" id="dirty" hidden title="Writing changes back to your files is not implemented yet">Changes stay in this view</span>
+    <span class="qa-bar" id="qa-bar" hidden></span>
     <div class="spacer"></div>
     <div class="toolbar">
       <button class="btn primary" id="btn-add" title="Add a target (N)">+ Add target</button>
-      <button class="btn" id="btn-layout" title="Arrange by stage and @family (L)">Auto-layout</button>
+      <button class="btn" id="btn-layout" title="Arrange by stage and block (L)">Auto-layout</button>
       <button class="btn" id="btn-undo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
     </div>
   </header>
@@ -346,8 +390,12 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
       <div class="stats" id="stats"></div>
     </div>
     <div class="sb-section">
-      <p class="eyebrow">Families <code>@family</code></p>
-      <div id="fams"></div>
+      <p class="eyebrow">Blocks <code>R/*.R</code></p>
+      <div id="blocks"></div>
+    </div>
+    <div class="sb-section" id="maps-section" hidden>
+      <p class="eyebrow">Maps <code>tar_map()</code></p>
+      <div id="maps"></div>
     </div>
     <div class="sb-section" id="helpers-section">
       <p class="eyebrow">Helper functions</p>
@@ -365,6 +413,16 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
         <span><i style="background:var(--s-err)"></i>Errored</span>
         <span><i style="background:var(--s-new)"></i>Never run</span>
       </div>
+    </div>
+    <div class="sb-section" id="qa-legend" hidden>
+      <p class="eyebrow">Review status</p>
+      <div class="legend">
+        <span><i style="border:2px solid var(--s-out);border-radius:3px"></i>Needs review</span>
+        <span><i style="border:2px dashed var(--s-out);border-radius:3px"></i>Check again</span>
+        <span><i style="border:2px solid var(--s-err);border-radius:3px"></i>Wrong / questionable</span>
+        <span><i style="border:1px solid var(--line);border-radius:3px;opacity:.5"></i>Reviewed</span>
+      </div>
+      <p class="help">Record verdicts with <code>pipeworks::qa_review()</code>; the dialog of a target shows the call.</p>
     </div>
     <div class="sb-section">
       <button class="btn small" id="btn-reset">Discard changes</button>
@@ -387,7 +445,7 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
       <div class="canvas-hint">
         <span><b>Double-click</b> a target to edit it</span>
         <span><b>Drag ●</b> onto a target to plug it in</span>
-        <span><b>Drop a target</b> into a box to change its <code>@family</code></span>
+        <span><b>Click a map pill</b> to unfold its variants</span>
       </div>
       <div class="zoombar">
         <button id="z-out" title="Zoom out" aria-label="Zoom out">−</button>
@@ -431,7 +489,7 @@ function fromModel(D) {
       title: f.title || '', description: f.description || '', returns: f.returns || '', family: f.family || '',
       params: Array.isArray(f.params) || !f.params ? {} : { ...f.params },
       keywords: arr(f.keywords), formals: arr(f.formals).map(x => ({ name: x.name, default: x.default ?? null })),
-      body: f.body || '', calls: arr(f.calls), called_by: arr(f.called_by),
+      body: f.body || '', calls: arr(f.calls), called_by: arr(f.called_by), qa: f.qa || null,
     };
   });
   const targets = {};
@@ -440,13 +498,18 @@ function fromModel(D) {
       id: t.name, name: t.name, mode: t.mode, fn: t.fn || '', type: t.type, command: t.command,
       args: arr(t.args).map(a => ({ name: a.name, value: a.value, kind: a.kind, named: !!a.named, refs: arr(a.targets) })),
       pattern: t.pattern || '', description: t.description || '', format: t.format || 'rds', status: t.status || 'unknown',
-      factory: t.factory || '', source: t.source || '', x: 0, y: 0,
+      factory: t.factory || '', source: t.source || '', block: t.block || '', map: t.map || null,
+      branches: t.branches ?? null, qa: t.qa || null, x: 0, y: 0,
     };
   });
   return { targets, fns, edges: arr(D.edges).map(e => ({ from: e.from, to: e.to })), sel: null };
 }
 const FILES = Object.fromEntries(arr(RAW.files).map(f => [f.path, f.text]));
+const MAPS = Object.fromEntries(arr(RAW.maps).map(m => [m.id, { ...m, templates: arr(m.templates), variants: arr(m.variants), color: ((m.color_index || 1) - 1) % 6 + 1 }]));
+const QA = RAW.qa_summary || null;
 let S = fromModel(RAW);
+const unfolded = new Set();   // map ids shown as single variants (view state, not undone)
+const SP = {};                // positions of folded map cards, by view id
 let view = { x: 40, y: 60, k: 1 };
 let hover = null, drawerTab = '_targets.R', hitLines = null;
 const undoStack = [];
@@ -457,8 +520,9 @@ function updateDirty() { $('#btn-undo').disabled = !undoStack.length; $('#dirty'
 function undo() {
   const s = undoStack.pop(); if (!s) return toast('Nothing to undo.');
   Object.assign(S, JSON.parse(s));
-  if (S.sel && S.sel.type === 'node' && !S.targets[S.sel.id]) S.sel = null;
-  if (S.sel && S.sel.type === 'edge' && !edgeById(S.sel.id)) S.sel = null;
+  VG = null;
+  if (S.sel && S.sel.type === 'node' && !vnode(S.sel.id)) S.sel = null;
+  if (S.sel && S.sel.type === 'edge' && !vedgeById(S.sel.id)) S.sel = null;
   updateDirty(); renderAll();
 }
 
@@ -473,28 +537,97 @@ const fnOf = id => { const t = S.targets[id]; return t && t.mode === 'function' 
 const usedBy = fn => ids().filter(i => S.targets[i].mode === 'function' && S.targets[i].fn === fn);
 function reaches(a, b) { const seen = new Set(), st = [a]; while (st.length) { const n = st.pop(); if (n === b) return true; if (seen.has(n)) continue; seen.add(n); st.push(...downs(n)); } return false; }
 function closure(id, next) { const out = new Set(), st = [...next(id)]; while (st.length) { const n = st.pop(); if (out.has(n)) continue; out.add(n); st.push(...next(n)); } return out; }
-function topo() {
-  const indeg = Object.fromEntries(ids().map(i => [i, deps(i).length]));
-  const q = ids().filter(i => !indeg[i]), out = [];
-  while (q.length) { const n = q.shift(); out.push(n); downs(n).forEach(d => { if (--indeg[d] === 0) q.push(d); }); }
+const REAL = { ids, deps, downs };
+function topo(G = REAL) {
+  const indeg = Object.fromEntries(G.ids().map(i => [i, G.deps(i).length]));
+  const q = G.ids().filter(i => !indeg[i]), out = [];
+  while (q.length) { const n = q.shift(); out.push(n); G.downs(n).forEach(d => { if (--indeg[d] === 0) q.push(d); }); }
   return out;
 }
-function stages() {
-  const layer = {}, order = topo();
-  order.forEach(id => { const d = deps(id); layer[id] = d.length ? Math.max(...d.map(p => layer[p])) + 1 : 0; });
-  [...order].reverse().forEach(id => { if (!deps(id).length) { const c = downs(id); if (c.length) layer[id] = Math.min(...c.map(x => layer[x])) - 1; } });
+function stages(G = REAL) {
+  const layer = {}, order = topo(G);
+  order.forEach(id => { const d = G.deps(id); layer[id] = d.length ? Math.max(...d.map(p => layer[p])) + 1 : 0; });
+  [...order].reverse().forEach(id => { if (!G.deps(id).length) { const c = G.downs(id); if (c.length) layer[id] = Math.min(...c.map(x => layer[x])) - 1; } });
   return layer;
 }
 const validName = s => /^[A-Za-z.][A-Za-z0-9._]*$/.test(s) && !/^\.\d/.test(s);
-/* Targets without a roxygen block join the family of their consumers when that is unambiguous. */
-function famOf(id) {
-  const f = fnOf(id); if (f) return f.family;
-  const fams = [...new Set(downs(id).map(d => fnOf(d)?.family || ''))];
-  return fams.length === 1 ? fams[0] : '';
+
+/* ---------- View graph: what the canvas draws ----------
+   A folded tar_map() shows one stacked card per template (view id "<map id>::<template>") with the
+   edges of all its variants aggregated onto it; an unfolded map shows every variant as its own node. */
+let VG = null;
+const mapOf = id => { const m = S.targets[id]?.map; return m && MAPS[m.id] ? m : null; };
+const dispOf = id => { const m = mapOf(id); return m && !unfolded.has(m.id) ? `${m.id}::${m.template}` : id; };
+function buildView() {
+  const nodes = {}, edges = [], byKey = {};
+  topo().forEach(id => {
+    const did = dispOf(id), t = S.targets[id];
+    const n = nodes[did] ||= { id: did, members: [], stack: did !== id, block: t.block || '', map: mapOf(id) };
+    n.members.push(id);
+  });
+  S.edges.forEach(e => {
+    if (!S.targets[e.from] || !S.targets[e.to]) return;
+    const from = dispOf(e.from), to = dispOf(e.to); if (from === to) return;
+    const key = from + '>' + to;
+    if (!byKey[key]) { byKey[key] = { from, to, real: [] }; edges.push(byKey[key]); }
+    byKey[key].real.push(e);
+  });
+  const ins = {}, outs = {};
+  edges.forEach(e => { (ins[e.to] ||= []).push(e.from); (outs[e.from] ||= []).push(e.to); });
+  const order = Object.keys(nodes);
+  return { nodes, edges, G: { ids: () => order, deps: id => ins[id] || [], downs: id => outs[id] || [] } };
 }
-function families() { const seen = []; topo().forEach(id => { const f = famOf(id); if (f && !seen.includes(f)) seen.push(f); }); return seen; }
-const famClass = f => { if (!f) return 'g-0'; const i = families().indexOf(f); return 'g-' + (i < 0 ? 0 : (i % 6) + 1); };
-const slug = f => (f || 'functions').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+const vg = () => (VG ||= buildView());
+const vids = () => vg().G.ids();
+const vnode = did => vg().nodes[did];
+const repOf = did => vnode(did)?.members[0] ?? did;
+const P = did => S.targets[did] || (SP[did] ||= { x: 0, y: 0 });
+const vedgeById = eid => vg().edges.find(e => edgeId(e) === eid);
+const mapLabel = m => `${m.param || 'variants'} ×${m.variants.length}`;
+const blockName = b => b || 'no block';
+function blocks() {
+  const seen = arr(RAW.blocks).slice();
+  vids().forEach(d => { const b = vnode(d).block; if (!seen.includes(b)) seen.push(b); });
+  return seen.filter(b => vids().some(d => vnode(d).block === b));
+}
+function toggleMap(mid) {
+  const before = currentPos(), wasOpen = unfolded.has(mid);
+  if (wasOpen) unfolded.delete(mid); else unfolded.add(mid);
+  VG = null;
+  // new view nodes start where their card / first variant was, then animate to the new layout
+  vids().forEach(d => {
+    if (before[d]) return;
+    const src = vnode(d).members.map(m => before[m] || before[`${mapOf(m)?.id}::${mapOf(m)?.template}`]).find(Boolean);
+    if (src) { P(d).x = src.x; P(d).y = src.y; }
+  });
+  if (S.sel?.type === 'node' && !vnode(S.sel.id)) S.sel = null;
+  if (S.sel?.type === 'edge' && !vedgeById(S.sel.id)) S.sel = null;
+  hover = null;
+  renderAll(); autoLayout();
+}
+
+/* ---------- QA overlay ---------- */
+const QA_RANK = { wrong: 0, questionable: 1, changed: 2, unreviewed: 3, check_again: 4, correct: 5 };
+const QA_LABEL = { unreviewed: 'unreviewed', changed: 'changed', check_again: 'check again', correct: 'correct', questionable: 'questionable', wrong: 'wrong' };
+const qaGroup = st => st === 'wrong' || st === 'questionable' ? 'bad' : st === 'changed' || st === 'unreviewed' ? 'todo' : st === 'check_again' ? 'again' : 'ok';
+let qaOn = !!QA;
+/* Review records behind a view node: its targets (variants share their template's item), their functions, and the map of a card. */
+function qaRecords(did) {
+  const n = vnode(did); if (!n) return [];
+  const out = [], seen = new Set(), add = q => { if (q && !seen.has(q.item)) { seen.add(q.item); out.push(q); } };
+  n.members.forEach(id => { add(S.targets[id].qa); add(fnOf(id)?.qa); });
+  if (n.map) add(MAPS[n.map.id]?.qa);
+  return out;
+}
+function qaOf(did) {
+  const recs = qaRecords(did); if (!recs.length) return null;
+  const worst = recs.reduce((a, q) => (QA_RANK[q.status] ?? 9) < (QA_RANK[a.status] ?? 9) ? q : a);
+  const self = recs.some(q => q.self_reviewed);
+  let g = qaGroup(worst.status);
+  if (g === 'ok' && self) g = 'todo';
+  const tag = g === 'bad' ? QA_LABEL[worst.status] : g === 'again' ? 'check again' : g === 'todo' ? (self && worst.status === 'correct' ? 'self-reviewed' : 'review') : '';
+  return { group: g, status: worst.status, self, tag };
+}
 const argValue = a => a.kind === 'target' ? nm(a.refs[0]) : a.value;
 const argText = a => a.named ? `${a.name} = ${argValue(a)}` : argValue(a);
 const titleOf = id => { const t = S.targets[id], f = fnOf(id); return f ? f.title : t.description || (t.mode === 'factory' ? `Renders ${t.source}` : ''); };
@@ -504,7 +637,6 @@ function fnIssues(f) {
   if (!f.title.trim()) out.push(`Add a roxygen title to ${n}`);
   f.formals.filter(x => x.name !== '...').forEach(x => { if (!(f.params[x.name] || '').trim()) out.push(`Document <code>@param ${esc(x.name)}</code> in ${n}`); });
   if (!f.returns.trim()) out.push(`Add <code>@return</code> to ${n}`);
-  if (!f.family.trim()) out.push(`Give ${n} a <code>@family</code> so it is grouped`);
   return out;
 }
 function targetIssues(id) {
@@ -529,13 +661,15 @@ function srcLoc(id) {
   const f = fnOf(id);
   if (f) return { file: f.file, line: f.line, from: f.doc_line, to: f.end_line };
   if (t.mode === 'factory' && t.source && FILES[t.source] != null) return { file: t.source, line: 1, from: 1, to: 1 };
-  const lines = (FILES['_targets.R'] || '').split('\n');
-  const re = new RegExp(`tar_\\w+\\(\\s*${t.name.replace(/\./g, '\\.')}\\b`);
+  // targets are written in their block (a tar_map() variant under its template's name)
+  const file = t.block && FILES[t.block] != null ? t.block : '_targets.R', name = (t.map ? t.map.template : t.name).replace(/\./g, '\\.');
+  const lines = (FILES[file] || '').split('\n');
+  const re = new RegExp(`tar_\\w+\\(\\s*${name}\\b`);
   for (let i = 0; i < lines.length; i++) {
-    if (re.test(lines[i]) || (/tar_\w+\(\s*$/.test(lines[i]) && new RegExp(`^\\s*${t.name.replace(/\./g, '\\.')}\\s*,`).test(lines[i + 1] || ''))) {
+    if (re.test(lines[i]) || (/tar_\w+\(\s*$/.test(lines[i]) && new RegExp(`^\\s*${name}\\s*,`).test(lines[i + 1] || ''))) {
       let end = i, depth = 0;
       for (let j = i; j < lines.length; j++) { depth += (lines[j].match(/\(/g) || []).length - (lines[j].match(/\)/g) || []).length; end = j; if (depth <= 0) break; }
-      return { file: '_targets.R', line: i + 1, from: i + 1, to: end + 1 };
+      return { file, line: i + 1, from: i + 1, to: end + 1 };
     }
   }
   return FILES['_targets.R'] != null ? { file: '_targets.R', line: 1, from: 1, to: 1 } : null;
@@ -609,11 +743,13 @@ function addTarget(x, y, from) {
   const before = snap();
   const name = uniqueName(from ? `${nm(from)}_next` : 'new_target', new Set(Object.values(S.targets).map(t => t.name)));
   let id = name; while (S.targets[id]) id += '_';
-  const family = from ? famOf(from) : '';
+  const fromBlock = from ? S.targets[from].block : '', file = /^R\//.test(fromBlock) ? fromBlock : `R/${name}.R`;
+  const family = from ? (fnOf(from)?.family || '') : '';
   const fn = uniqueName(`make_${name}`, new Set(Object.keys(S.fns)));
-  S.fns[fn] = { name: fn, file: `R/${slug(family)}.R`, doc_line: null, line: null, end_line: null, title: '', description: '', returns: '', family,
-    params: {}, keywords: [], formals: [], body: '', calls: [], called_by: [], isNew: true };
-  S.targets[id] = { id, name, mode: 'function', fn, type: 'stem', command: '', args: [], pattern: '', description: '', format: 'rds', status: 'new', factory: '', source: '', x, y };
+  S.fns[fn] = { name: fn, file, doc_line: null, line: null, end_line: null, title: '', description: '', returns: '', family,
+    params: {}, keywords: [], formals: [], body: '', calls: [], called_by: [], qa: null, isNew: true };
+  S.targets[id] = { id, name, mode: 'function', fn, type: 'stem', command: '', args: [], pattern: '', description: '', format: 'rds', status: 'new', factory: '', source: '',
+    block: file, map: null, branches: null, qa: null, x, y };
   if (from) { plugInto(S.targets[id], S.fns[fn], from, []); S.edges.push({ from, to: id }); }
   S.sel = { type: 'node', id };
   renderAll();
@@ -628,30 +764,40 @@ function removeTarget(id) {
   S.sel = null; renderAll();
   toast(`Removed ${name}.`, true);
 }
+/* Canvas actions on view nodes and edges: a folded map card stands for several targets, so single-target actions need it unfolded. */
+const UNFOLD = 'Unfold the map (click its pill) to change a single variant.';
+function plugCheck(fromDid, toDid) { return vnode(fromDid)?.stack || vnode(toDid)?.stack ? UNFOLD : canConnect(fromDid, toDid); }
+function removeNode(did) { if (vnode(did)?.stack) return toast(UNFOLD); removeTarget(did); }
+function unplugView(eid) {
+  const e = vedgeById(eid); if (!e) return;
+  if (e.real.length !== 1 || vnode(e.from)?.stack || vnode(e.to)?.stack) return toast(UNFOLD);
+  unplug(e.real[0].from, e.real[0].to);
+}
 function invalidate(id) { [id, ...closure(id, downs)].forEach(i => { const t = S.targets[i]; if (t.status === 'uptodate' || t.status === 'errored') t.status = 'outdated'; }); }
 
-/* ---------- Layout: stages left to right, one box per @family, boxes packed into rows ---------- */
+/* ---------- Layout: stages left to right, one box per block (file), boxes packed into rows ---------- */
 function computeLayout() {
-  const layer = stages(), order = topo(), groups = {};
+  const G = vg().G, deps = G.deps, downs = G.downs;
+  const layer = stages(G), order = topo(G), groups = {};
   order.forEach(id => {
-    const f = famOf(id), key = f || '\u0000' + id;
+    const b = vnode(id).block, key = b || '\u0000' + id;
     const g = groups[key] ||= { key, cols: {}, min: Infinity, max: -Infinity };
     (g.cols[layer[id]] ||= []).push(id); g.min = Math.min(g.min, layer[id]); g.max = Math.max(g.max, layer[id]);
   });
-  const G = Object.values(groups), pos = {};
-  G.forEach(g => Object.values(g.cols).forEach(c => c.forEach((id, i) => (pos[id] = i))));
+  const GR = Object.values(groups), pos = {};
+  GR.forEach(g => Object.values(g.cols).forEach(c => c.forEach((id, i) => (pos[id] = i))));
   const maxL = Math.max(0, ...Object.values(layer));
   for (let it = 0; it < 8; it++) {
     const down = it % 2 === 0, seq = [...Array(maxL + 1).keys()]; if (!down) seq.reverse();
-    seq.forEach(s => G.forEach(g => {
+    seq.forEach(s => GR.forEach(g => {
       const c = g.cols[s]; if (!c || c.length < 2) return;
       const sc = {}; c.forEach(id => { const n = down ? deps(id) : downs(id); sc[id] = n.length ? n.reduce((a, x) => a + pos[x], 0) / n.length : pos[id]; });
       c.sort((a, b) => sc[a] - sc[b]); c.forEach((id, i) => (pos[id] = i));
     }));
   }
-  G.sort((a, b) => a.min - b.min || b.max - a.max);
+  GR.sort((a, b) => a.min - b.min || b.max - a.max);
   const rows = [];
-  G.forEach(g => {
+  GR.forEach(g => {
     g.h = Math.max(...Object.values(g.cols).map(c => c.length));
     let r = rows.find(r => r.end < g.min);
     if (!r) { r = { end: -1, groups: [] }; rows.push(r); }
@@ -670,9 +816,9 @@ function computeLayout() {
 }
 function groupRects() {
   const rects = {};
-  ids().forEach(id => {
-    const f = famOf(id); if (!f) return;
-    const t = S.targets[id], h = t._h || NODE_H, r = rects[f] ||= { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  vids().forEach(id => {
+    const b = vnode(id).block; if (!b) return;
+    const t = P(id), h = t._h || NODE_H, r = rects[b] ||= { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
     r.x0 = Math.min(r.x0, t.x - PAD); r.y0 = Math.min(r.y0, t.y - HEAD); r.x1 = Math.max(r.x1, t.x + NODE_W + PAD); r.y1 = Math.max(r.y1, t.y + h + PAD);
   });
   return rects;
@@ -686,17 +832,19 @@ function fitFor(posMap) {
   const k = Math.max(0.3, Math.min(1.1, (r.width - 60) / (maxX - minX), (r.height - padTop - 56) / (maxY - minY)));
   return { k, x: (r.width - (maxX - minX) * k) / 2 - minX * k, y: padTop + (r.height - padTop - 48 - (maxY - minY) * k) / 2 - minY * k };
 }
-const currentPos = () => Object.fromEntries(ids().map(i => [i, { x: S.targets[i].x, y: S.targets[i].y }]));
+const currentPos = () => Object.fromEntries(vids().map(i => [i, { x: P(i).x, y: P(i).y }]));
+let animToken = 0;
 function animateTo(posMap, viewTo) {
-  const startPos = currentPos(), v0 = { ...view };
+  const startPos = currentPos(), v0 = { ...view }, token = ++animToken;
   const apply = e => {
-    ids().forEach(i => { const a = startPos[i], b = posMap[i] || a; S.targets[i].x = a.x + (b.x - a.x) * e; S.targets[i].y = a.y + (b.y - a.y) * e; });
+    vids().forEach(i => { const a = startPos[i], b = posMap[i] || a; if (!a) return; P(i).x = a.x + (b.x - a.x) * e; P(i).y = a.y + (b.y - a.y) * e; });
     if (viewTo) view = { x: v0.x + (viewTo.x - v0.x) * e, y: v0.y + (viewTo.y - v0.y) * e, k: v0.k + (viewTo.k - v0.k) * e };
     renderPositions(); applyView();
   };
   if (REDUCED) return apply(1);
   const t0 = performance.now();
-  const step = now => { const p = Math.min(1, (now - t0) / 450); apply(1 - Math.pow(1 - p, 3)); if (p < 1) requestAnimationFrame(step); };
+  // a newer animation (e.g. after folding a map) takes over from this one
+  const step = now => { if (token !== animToken) return; const p = Math.min(1, (now - t0) / 450); apply(1 - Math.pow(1 - p, 3)); if (p < 1) requestAnimationFrame(step); };
   requestAnimationFrame(step);
 }
 function autoLayout() { const p = computeLayout(); animateTo(p, fitFor(p)); }
@@ -718,57 +866,73 @@ function callText(t) {
   return first + ((t.command || '').includes('\n') ? ' …' : '');
 }
 function lineage() {
-  const id = (hover && S.targets[hover]) ? hover : (S.sel?.type === 'node' && S.targets[S.sel.id] ? S.sel.id : null);
+  const id = (hover && vnode(hover)) ? hover : (S.sel?.type === 'node' && vnode(S.sel.id) ? S.sel.id : null);
   if (!id) { canvas.classList.remove('focus-sel'); return null; }
   canvas.classList.toggle('focus-sel', id !== hover);
-  return { id, up: closure(id, deps), dn: closure(id, downs) };
+  const G = vg().G;
+  return { id, up: closure(id, G.deps), dn: closure(id, G.downs) };
+}
+const BUILD_RANK = { errored: 0, outdated: 1, running: 2, new: 3, unknown: 4, uptodate: 5 };
+const nodeStatus = n => n.members.map(m => S.targets[m].status).reduce((a, s) => (BUILD_RANK[s] ?? 9) < (BUILD_RANK[a] ?? 9) ? s : a);
+/* A folded card shows its template's call, with the variant's value put back as the map parameter where it is visible. */
+function cardCall(n) {
+  const t = S.targets[n.members[0]], txt = callText(t), m = MAPS[n.map.id];
+  return m.param && t.map.variant ? txt.split(`"${t.map.variant}"`).join(m.param) : txt;
 }
 function renderNodes() {
   const L = lineage();
-  nodesEl.innerHTML = ids().map(id => {
-    const t = S.targets[id], f = fnOf(id), n = targetIssues(id).length, sel = S.sel?.type === 'node' && S.sel.id === id;
-    const dim = L && !(id === L.id || L.up.has(id) || L.dn.has(id)), title = titleOf(id), shared = f ? usedBy(f.name).length : 0;
+  nodesEl.innerHTML = vids().map(id => {
+    const n = vnode(id), t = S.targets[n.members[0]], f = fnOf(n.members[0]), pos = P(id);
+    const issues = targetIssues(n.members[0]).length, sel = S.sel?.type === 'node' && S.sel.id === id;
+    const dim = L && !(id === L.id || L.up.has(id) || L.dn.has(id)), title = titleOf(n.members[0]), shared = f ? usedBy(f.name).length : 0;
+    const m = n.map && MAPS[n.map.id], q = qaOf(id), status = nodeStatus(n);
     const chips = [
       f ? `<span class="chip">${esc(f.file)}</span>` : t.mode === 'factory' ? `<span class="chip">${esc(t.source)}</span>` : '<span class="chip">expression</span>',
-      shared > 1 ? `<span class="chip" title="${esc(f.name)}() is used by ${shared} targets">shared ×${shared}</span>` : '',
+      shared > 1 && !n.stack ? `<span class="chip" title="${esc(f.name)}() is used by ${shared} targets">shared ×${shared}</span>` : '',
       t.format !== 'rds' ? `<span class="chip">${esc(t.format)}</span>` : '',
-      t.pattern ? `<span class="chip">${esc(t.pattern)}</span>` : '',
-      n ? `<span class="chip warn">${n} to document</span>` : '',
+      t.pattern ? `<span class="chip">${esc(t.pattern)}</span><span class="chip" title="${t.branches == null ? 'Dynamic branches: number known after a run' : `${t.branches} dynamic branches`}">×${t.branches ?? '?'}</span>` : '',
+      issues ? `<span class="chip warn">${issues} to document</span>` : '',
     ].join('');
-    return `<div class="node ${famClass(famOf(id))} status-${t.status}${sel ? ' sel' : ''}${dim ? ' dim' : ''}" data-id="${esc(id)}" style="transform:translate(${t.x}px,${t.y}px)">
+    const cls = ['node', `status-${status}`, m ? `mapped mc-${m.color}` : '', n.stack ? 'stack' : '', q ? `qa-${q.group}` : '', sel ? 'sel' : '', dim ? 'dim' : ''].filter(Boolean).join(' ');
+    const pill = m ? `<button class="mpill" data-map="${esc(m.id)}" title="${n.stack ? `Unfold all ${m.variants.length} variants of this tar_map(): ${esc(m.variants.join(', '))}` : 'Fold this tar_map() back into one card per template'}">${n.stack ? esc(mapLabel(m)) : 'collapse'}</button>` : '';
+    const tag = q && q.tag ? `<span class="qa-tag${q.group === 'bad' ? ' bad' : ''}" title="Review status: ${esc(QA_LABEL[q.status] || q.status)}${q.self ? ' (self-reviewed)' : ''}">${esc(q.tag)}</span>` : '';
+    return `<div class="${cls}" data-id="${esc(id)}" style="transform:translate(${pos.x}px,${pos.y}px)">
+      ${tag}${pill}
       <span class="port port-in" title="Inputs plug in here"></span>
-      <span class="port port-out" data-port="${esc(id)}" title="Drag to plug ${esc(t.name)} into another target"></span>
-      <div class="n-top"><span class="n-name">${esc(t.name)}</span><span class="n-status" title="${STATUS[t.status] || t.status}"></span></div>
-      <div class="n-call">${esc(callText(t))}</div>
+      <span class="port port-out" data-port="${esc(id)}" title="Drag to plug ${esc(n.stack ? n.map.template : t.name)} into another target"></span>
+      <div class="n-top"><span class="n-name">${esc(n.stack ? n.map.template : t.name)}</span><span class="n-status" title="${STATUS[status] || status}"></span></div>
+      <div class="n-call">${esc(n.stack ? cardCall(n) : callText(t))}</div>
       <div class="n-title${title ? '' : ' empty'}">${esc(title || 'No roxygen title yet')}</div>
       <div class="n-foot">${chips}</div>
     </div>`;
   }).join('');
-  nodesEl.querySelectorAll('.node').forEach(el => { const t = S.targets[el.dataset.id]; if (t) t._h = el.offsetHeight; });
-  $('#canvas-empty').hidden = ids().length > 0;
+  nodesEl.querySelectorAll('.node').forEach(el => { P(el.dataset.id)._h = el.offsetHeight; });
+  $('#canvas-empty').hidden = vids().length > 0;
   renderGroups(); renderNodebar();
 }
-function renderGroups(dropFam) {
+function renderGroups() {
   const rects = groupRects();
-  groupsEl.innerHTML = families().filter(f => rects[f]).map(f => {
-    const r = rects[f], nFn = Object.values(S.fns).filter(x => x.family === f && usedBy(x.name).length).length;
-    return `<div class="group ${famClass(f)}${dropFam === f ? ' drop' : ''}" data-fam="${esc(f)}" style="transform:translate(${r.x0}px,${r.y0}px);width:${r.x1 - r.x0}px;height:${r.y1 - r.y0}px">
-      <span class="g-label" data-gdrag="${esc(f)}" title="Drag to move the whole family"><code>@family</code>${esc(f)}<small>${nFn} fn</small></span></div>`;
+  groupsEl.innerHTML = blocks().filter(b => rects[b]).map(b => {
+    const r = rects[b], nT = ids().filter(i => S.targets[i].block === b).length;
+    return `<div class="group" data-block="${esc(b)}" style="transform:translate(${r.x0}px,${r.y0}px);width:${r.x1 - r.x0}px;height:${r.y1 - r.y0}px">
+      <span class="g-label" data-gdrag="${esc(b)}" title="Drag to move the whole block"><code>${esc(blockName(b))}</code><small>${nT} target${nT === 1 ? '' : 's'}</small></span></div>`;
   }).join('');
 }
 function renderNodebar() {
-  const id = S.sel?.type === 'node' ? S.sel.id : null, t = id && S.targets[id];
-  nodebar.hidden = !t || !!drag;
-  if (!t) return;
-  nodebar.style.transform = `translate(${t.x}px, ${t.y - 40}px)`;
-  nodebar.querySelector('[data-act="rstudio"]').hidden = !srcLoc(id) || (fnOf(id)?.isNew);
+  const id = S.sel?.type === 'node' ? S.sel.id : null, n = id && vnode(id);
+  nodebar.hidden = !n || !!drag;
+  if (!n) return;
+  const pos = P(id), rep = n.members[0];
+  nodebar.style.transform = `translate(${pos.x}px, ${pos.y - 40}px)`;
+  nodebar.querySelector('[data-act="rstudio"]').hidden = !srcLoc(rep) || (fnOf(rep)?.isNew);
+  nodebar.querySelector('[data-act="remove"]').hidden = n.stack;
 }
 function renderPositions() {
-  nodesEl.querySelectorAll('.node').forEach(el => { const t = S.targets[el.dataset.id]; if (t) el.style.transform = `translate(${t.x}px,${t.y}px)`; });
+  nodesEl.querySelectorAll('.node').forEach(el => { const t = P(el.dataset.id); el.style.transform = `translate(${t.x}px,${t.y}px)`; });
   renderEdges(); renderGroups(); renderNodebar();
 }
 function geom(e) {
-  const a = S.targets[e.from], b = S.targets[e.to];
+  const a = P(e.from), b = P(e.to);
   const x1 = a.x + NODE_W, y1 = a.y + PORT_Y, x2 = b.x, y2 = b.y + PORT_Y;
   const dx = Math.max(50, Math.abs(x2 - x1) * 0.5);
   return { x1, y1, x2, y2, c1x: x1 + dx, c2x: x2 - dx };
@@ -776,18 +940,18 @@ function geom(e) {
 let tempPath = '';
 function renderEdges() {
   const L = lineage(); let html = '';
-  S.edges.forEach(e => {
-    if (!S.targets[e.from] || !S.targets[e.to]) return;
+  vg().edges.forEach(e => {
     const g = geom(e), d = `M${g.x1},${g.y1} C${g.c1x},${g.y1} ${g.c2x},${g.y2} ${g.x2},${g.y2}`;
     const eid = edgeId(e), sel = S.sel?.type === 'edge' && S.sel.id === eid;
     let cls = '';
     if (L) { const on = ((e.to === L.id || L.up.has(e.to)) && L.up.has(e.from)) || ((e.from === L.id || L.dn.has(e.from)) && L.dn.has(e.to)); cls = on ? ' hl' : ' dim'; }
-    const arg = S.targets[e.to].args.find(a => a.refs.includes(e.from));
-    const tip = `${nm(e.from)} → ${nm(e.to)}${arg ? ` (argument ${arg.name} of ${S.targets[e.to].fn}())` : ''}`;
+    const r0 = e.real[0], arg = S.targets[r0.to].args.find(a => a.refs.includes(r0.from));
+    const tip = e.real.length > 1 ? `${e.real.length} links: ${e.real.map(x => `${nm(x.from)} → ${nm(x.to)}`).join(', ')}`
+      : `${nm(r0.from)} → ${nm(r0.to)}${arg ? ` (argument ${arg.name} of ${S.targets[r0.to].fn}())` : ''}`;
     html += `<g class="edge-g${sel ? ' sel' : ''}${cls}"><path class="edge" d="${d}"/><path class="edge-hit" d="${d}" data-edge="${esc(eid)}"><title>${esc(tip)}</title></path>`;
     if (sel) {
       const mx = (g.x1 + 3 * g.c1x + 3 * g.c2x + g.x2) / 8, my = (g.y1 + g.y2) / 2;
-      html += `<g class="edge-del" data-del="${esc(eid)}" transform="translate(${mx},${my})"><circle r="10"/><path d="M-4,-4 L4,4 M4,-4 L-4,4"/><title>Unplug ${esc(nm(e.from))} from ${esc(nm(e.to))}</title></g>`;
+      html += `<g class="edge-del" data-del="${esc(eid)}" transform="translate(${mx},${my})"><circle r="10"/><path d="M-4,-4 L4,4 M4,-4 L-4,4"/><title>Unplug ${esc(nm(r0.from))} from ${esc(nm(r0.to))}</title></g>`;
     }
     html += '</g>';
   });
@@ -803,26 +967,39 @@ function select(sel, center) {
   S.sel = sel;
   nodesEl.querySelectorAll('.node').forEach(n => n.classList.toggle('sel', sel?.type === 'node' && n.dataset.id === sel.id));
   applyHover(); renderNodebar(); renderSidebar();
-  if (center && sel?.type === 'node') {
-    const t = S.targets[sel.id], r = canvas.getBoundingClientRect();
+  if (center && sel?.type === 'node' && vnode(sel.id)) {
+    const t = P(sel.id), r = canvas.getBoundingClientRect();
     animateTo(currentPos(), { k: view.k, x: r.width / 2 - (t.x + NODE_W / 2) * view.k, y: r.height / 2 - (t.y + NODE_H / 2) * view.k });
   }
 }
+/* Go to a target from a list or the modal: its card while its map is folded. */
+const goto = id => select({ type: 'node', id: S.targets[id] ? dispOf(id) : id }, true);
 
 /* ---------- Rendering: sidebar ---------- */
 function renderSidebar() {
   const issues = allIssues(), layer = stages(), nStages = ids().length ? new Set(Object.values(layer)).size : 0;
+  const selId = S.sel?.type === 'node' ? S.sel.id : null;
   $('#stats').innerHTML = `
     <div class="stat"><b>${ids().length}</b><span>targets</span></div>
     <div class="stat"><b>${S.edges.length}</b><span>links</span></div>
     <div class="stat"><b>${nStages}</b><span>stages</span></div>
     <div class="stat${issues.length ? ' warn' : ''}"><b>${issues.length}</b><span>to fix</span></div>`;
-  const byFam = {}; topo().forEach(id => (byFam[famOf(id)] ||= []).push(id));
-  const order = [...families(), ...(byFam[''] ? [''] : [])];
-  $('#fams').innerHTML = order.map(f => `<div class="fam ${famClass(f)}">
-      <div class="fam-head"><span class="sw"></span>${f ? esc(f) : '<span style="color:var(--muted)">No @family</span>'}</div>
-      ${byFam[f].map(id => { const t = S.targets[id], n = targetIssues(id).length; return `<button class="t-item status-${t.status}${S.sel?.type === 'node' && S.sel.id === id ? ' sel' : ''}" data-goto="${esc(id)}" title="${esc(callText(t))}"><span class="st"></span><span class="nm">${esc(t.name)}</span>${n ? `<span class="badge">${n}</span>` : ''}</button>`; }).join('')}
+  const byBlock = {}; vids().forEach(d => (byBlock[vnode(d).block] ||= []).push(d));
+  $('#blocks').innerHTML = Object.keys(byBlock).sort((a, b) => (blocks().indexOf(a) + 1 || 1e9) - (blocks().indexOf(b) + 1 || 1e9)).map(b => `<div class="fam">
+      <div class="fam-head"><code>${esc(blockName(b))}</code><span class="sb-count">${byBlock[b].length}</span></div>
+      ${byBlock[b].map(d => {
+        const n = vnode(d), t = S.targets[n.members[0]], k = targetIssues(n.members[0]).length, m = n.map && MAPS[n.map.id];
+        return `<button class="t-item status-${nodeStatus(n)}${m ? ` mc-${m.color}` : ''}${selId === d ? ' sel' : ''}" data-goto="${esc(d)}" title="${esc(n.stack ? cardCall(n) : callText(t))}"><span class="st"></span><span class="nm">${esc(n.stack ? n.map.template : t.name)}</span>${n.stack ? `<span class="x">×${m.variants.length}</span>` : ''}${k ? `<span class="badge">${k}</span>` : ''}</button>`;
+      }).join('')}
     </div>`).join('') || '<p class="help">No targets yet.</p>';
+  const maps = Object.values(MAPS);
+  $('#maps-section').hidden = !maps.length;
+  $('#maps').innerHTML = maps.map(m => {
+    const n = ids().filter(i => mapOf(i)?.id === m.id).length, bl = [...new Set(ids().filter(i => mapOf(i)?.id === m.id).map(i => S.targets[i].block))];
+    return `<div class="map-row mc-${m.color}"><button class="mpill" data-map="${esc(m.id)}" title="${unfolded.has(m.id) ? 'Fold' : 'Unfold'} ${esc(m.id)}">${unfolded.has(m.id) ? 'collapse' : esc(mapLabel(m))}</button>
+      <span><code>${esc(m.templates.join(', '))}</code> · ${n} targets · ${bl.length} block${bl.length === 1 ? '' : 's'}</span></div>`;
+  }).join('');
+  $('#qa-legend').hidden = !QA;
   const helpers = Object.values(S.fns).filter(f => !usedBy(f.name).length && !f.isNew);
   $('#helpers-section').hidden = !helpers.length;
   $('#helpers').innerHTML = helpers.map(f => `<button class="helper" data-fnloc="${esc(f.name)}" title="Show ${esc(f.name)}() in ${esc(f.file)}"><b>${esc(f.name)}()</b><span>${f.called_by.length ? 'used by ' + f.called_by.map(esc).join(', ') : 'not used by any target'} · ${esc(f.file)}</span></button>`).join('');
@@ -901,14 +1078,16 @@ function argSource(t, formal) {
   return '<span>Not passed and no default</span>';
 }
 function renderModal() {
-  const t = M.t, f = M.f, loc = srcLoc(M.id), fam = f ? f.family : famOf(M.id);
+  const t = M.t, f = M.f, loc = srcLoc(M.id), mp = mapOf(M.id), m = mp && MAPS[mp.id];
   const others = f ? usedBy(f.name).filter(x => x !== M.id) : [];
+  const famList = [...new Set(Object.values(S.fns).map(x => x.family).filter(Boolean))];
+  const mapNote = m ? `<div class="notice mc-${m.color}"><code>${esc(t.name)}</code> is variant <code>${esc(mp.variant || '(none)')}</code> of template <code>${esc(mp.template)}</code> in <code>tar_map()</code> over <code>${esc(m.param || 'values')}</code> = ${m.variants.map(v => `<code>${esc(v)}</code>`).join(', ')}. ${unfolded.has(m.id) ? '' : 'Its card stands for all variants.'}</div>` : '';
   const cands = ids().filter(c => c !== M.id && !M.deps.includes(c) && !reaches(M.id, c));
   const depList = `<div class="deps">${M.deps.map(d => `<span class="dep">${esc(nm(d))}${t.mode === 'function' ? `<button data-unplug="${esc(d)}" title="Unplug ${esc(nm(d))}" aria-label="Unplug ${esc(nm(d))}">✕</button>` : ''}</span>`).join('') || '<span class="help">None</span>'}</div>`;
   modal.innerHTML = `
-    <header class="m-head ${famClass(fam)} status-${t.status}">
+    <header class="m-head status-${t.status}${m ? ` mc-${m.color}` : ''}" style="--gc:var(--mc, var(--accent))">
       <div class="m-row">
-        <span class="m-kicker">${f ? (fam ? `@family ${esc(fam)}` : 'No @family') : t.mode === 'factory' ? `Target factory · ${esc(t.factory)}()` : 'Expression target'}</span>
+        <span class="m-kicker">${esc(blockName(t.block))}${f ? (f.family ? ` · @family ${esc(f.family)}` : '') : t.mode === 'factory' ? ` · target factory ${esc(t.factory)}()` : ' · expression target'}</span>
         <span class="pill">${STATUS[t.status] || esc(t.status)}</span>
         <span class="spacer"></span>
         ${loc && !(f && f.isNew) ? `<span class="loc">${esc(loc.file)}:${loc.line}</span><button class="btn small" data-m="rstudio">Open in RStudio</button>` : ''}
@@ -918,7 +1097,7 @@ function renderModal() {
       <span class="err-msg" id="m-err" hidden></span>
     </header>
     <div class="m-body">
-      <div class="m-col">${f ? `
+      <div class="m-col">${qaSection(M.id)}${mapNote}${f ? `
         <h3>Documentation <small>roxygen block of <code>${esc(f.name)}()</code></small></h3>
         ${others.length ? `<div class="notice"><code>${esc(f.name)}()</code> is also used by ${others.map(o => `<code>${esc(nm(o))}</code>`).join(', ')}. Documentation and body changes apply to all of them.</div>` : ''}
         <div class="field"><label for="m-title">Title <code>#' first line</code></label>
@@ -933,16 +1112,16 @@ function renderModal() {
         <div class="field"><label for="m-returns">Returns <code>@return</code></label>
           <textarea class="txt" id="m-returns" data-ff="returns" rows="2" placeholder="e.g. A tibble of valid, unique responses.">${esc(f.returns)}</textarea></div>
         <div class="grid2">
-          <div class="field"><label for="m-family">Group <code>@family</code></label>
+          <div class="field"><label for="m-family">Family <code>@family</code></label>
             <input class="inp" id="m-family" data-ff="family" list="fam-list" value="${esc(f.family)}" placeholder="e.g. Data import" autocomplete="off">
-            <datalist id="fam-list">${families().map(x => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
+            <datalist id="fam-list">${famList.map(x => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
           <div class="field"><label for="m-file">Source file</label>
             <input class="inp mono" id="m-file" data-ff="file" value="${esc(f.file)}" spellcheck="false" autocomplete="off" ${f.isNew ? '' : 'readonly title="Moving functions between files is not supported yet"'}></div>
         </div>` : `
         <h3>Documentation <small>${t.mode === 'factory' ? 'targets created by a factory have no roxygen block' : 'stored in <code>tar_target(description = )</code>'}</small></h3>
         <div class="field"><label for="m-desc">Description</label>
           <textarea class="txt" id="m-desc" data-tf="description" rows="3">${esc(t.description)}</textarea></div>
-        <p class="help">${t.mode === 'factory' ? `Its inputs come from <code>tar_read()</code> calls in <code>${esc(t.source)}</code>.` : 'It is shown in the box of the family that uses it.'}</p>`}
+        <p class="help">${t.mode === 'factory' ? `Its inputs come from <code>tar_read()</code> calls in <code>${esc(t.source)}</code>.` : `It is shown in the box of <code>${esc(blockName(t.block))}</code>, where it is written.`}</p>`}
       </div>
       <div class="m-col">${f ? `
         <h3>Function</h3>
@@ -973,6 +1152,30 @@ function renderModal() {
   refreshModal();
   modal.querySelectorAll('textarea[data-p]').forEach(autoGrow);
 }
+/* Read-only review status of the items behind a target: the target (variants share their template's item), its function and its map. */
+function qaSection(id) {
+  if (!QA) return '';
+  const t = S.targets[id], mp = mapOf(id);
+  const recs = [[t.qa, 'target'], [fnOf(id)?.qa, 'function'], [mp && MAPS[mp.id]?.qa, 'map']].filter(r => r[0]);
+  if (!recs.length) return `<section class="qa-sec"><span class="help">No review item for ${esc(t.name)} (it was not found in the source files).</span></section>`;
+  const fmtDate = d => d ? esc(String(d).replace('T', ' ').replace(/(\.\d+)?Z$/, '')) : '';
+  const items = recs.map(([q]) => {
+    const g = qaGroup(q.status), hist = arr(q.history);
+    return `<div class="qa-item">
+      <div class="qa-head"><code>${esc(q.item)}</code><span class="qa-st ${g}">${esc(QA_LABEL[q.status] || q.status)}</span>
+        ${q.self_reviewed ? '<span class="qa-st bad" title="qa_check() fails until someone else reviews it">self-reviewed</span>' : ''}
+        ${q.changed_vs_base ? `<span class="help">changed vs <code>${esc(QA.base)}</code></span>` : ''}
+        ${q.last_author ? `<span class="help">last changed by ${esc(q.last_author)}</span>` : ''}</div>
+      ${hist.length ? `<ul class="qa-hist">${hist.slice(0, 4).map(h => `<li class="${h.current ? '' : 'old'}"><b>${esc(h.verdict)}</b> · ${esc(h.reviewer || '?')} · ${fmtDate(h.date)}${h.current ? '' : ' · <i>for an older version</i>'}${h.comment ? ` · <q>${esc(h.comment)}</q>` : ''}</li>`).join('')}${hist.length > 4 ? `<li>${hist.length - 4} older entries</li>` : ''}</ul>` : '<span class="help">No verdict yet.</span>'}
+      ${(() => { const call = `pipeworks::qa_review("${q.item}", "correct")`; return `<div class="qa-call"><code>${esc(call)}</code><button class="btn small" data-copy="${esc(call)}">Copy</button></div>`; })()}
+    </div>`;
+  }).join('');
+  return `<section class="qa-sec" id="m-qa"><h3>Review <small>read-only · record verdicts with <code>qa_review()</code></small></h3>${items}</section>`;
+}
+function copyText(text, msg) {
+  const fallback = () => toast(`Copy this: ${text}`);
+  try { navigator.clipboard.writeText(text).then(() => toast(msg), fallback); } catch { fallback(); }
+}
 function refreshModal() {
   const t = M.t, f = M.f, sig = $('#m-sig');
   if (sig) sig.innerHTML = hl(signatureFor(f));
@@ -995,10 +1198,10 @@ function saveModal() {
   push(M.isNew ? M.before : snap());
   t.name = t.name.trim();
   const cur = S.targets[M.id];
-  let famChanged = false, codeChanged = false;
+  let codeChanged = false;
   if (f) {
     f.name = f.name.trim(); f.family = f.family.trim();
-    famChanged = f.family !== orig.family;
+    if (f.isNew) t.block = f.file.trim();
     codeChanged = f.body !== orig.body || JSON.stringify(f.formals) !== JSON.stringify(orig.formals) || JSON.stringify(t.args) !== JSON.stringify(cur.args);
     Object.keys(f.params).forEach(k => { if (!f.formals.some(x => x.name === k)) delete f.params[k]; });
     if (f.name !== orig.name) { delete S.fns[orig.name]; usedBy(orig.name).forEach(i => { S.targets[i].fn = f.name; }); t.fn = f.name; }
@@ -1011,7 +1214,7 @@ function saveModal() {
   const wasNew = M.isNew;
   closeModal(true);
   renderAll();
-  if (famChanged || wasNew) autoLayout();
+  if (wasNew) autoLayout();
   toast(wasNew ? `Added ${t.name}. It exists only in this view until writing to files is implemented.` : 'Applied in this view. Your files are unchanged.', true);
 }
 function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px'; }
@@ -1021,7 +1224,6 @@ modal.addEventListener('input', e => {
   if (el.dataset.p) { M.f.params[el.dataset.p] = el.value; autoGrow(el); return refreshModal(); }
   if (el.dataset.ff) {
     M.f[el.dataset.ff] = el.value;
-    if (el.dataset.ff === 'family' && M.f.isNew) { M.f.file = `R/${slug(el.value.trim())}.R`; const fe = $('#m-file'); if (fe) fe.value = M.f.file; }
     return refreshModal();
   }
   if (el.dataset.tf) {
@@ -1043,7 +1245,8 @@ modal.addEventListener('change', e => {
 modal.addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.unplug) { const why = unplugFrom(M.t, M.f, b.dataset.unplug, M.deps); if (why) toast(why); return renderModal(); }
-  if (b.dataset.goto) { const id = b.dataset.goto; closeModal(false); select({ type: 'node', id }, true); return; }
+  if (b.dataset.goto) { const id = b.dataset.goto; closeModal(false); goto(id); return; }
+  if (b.dataset.copy) return copyText(b.dataset.copy, 'Copied. Run it in the R console of the project.');
   const a = b.dataset.m;
   if (a === 'cancel') closeModal(false);
   else if (a === 'save') saveModal();
@@ -1053,37 +1256,53 @@ modal.addEventListener('click', e => {
 overlay.addEventListener('pointerdown', e => { if (e.target === overlay) closeModal(false); });
 
 /* ---------- Render all ---------- */
-function renderAll() { renderNodes(); renderEdges(); renderSidebar(); renderCode(); }
+function renderAll() { VG = null; renderNodes(); renderEdges(); renderSidebar(); renderCode(); renderQaBar(); }
+function renderQaBar() {
+  const bar = $('#qa-bar'); bar.hidden = !QA;
+  canvas.classList.toggle('qa-on', !!QA && qaOn);
+  if (!QA) return;
+  const pct = x => QA.total ? (100 * x / QA.total).toFixed(1) + '%' : '0%';
+  bar.innerHTML = `${QA.branch ? `<span>Reviewing <b>${esc(QA.branch)}</b>${QA.base ? ` → <b>${esc(QA.base)}</b>` : ''}</span>` : ''}
+    <span class="qa-prog" role="img" aria-label="${QA.done} of ${QA.total} reviewed"><i style="width:${pct(QA.done)};background:var(--s-ok)"></i><i style="width:${pct(QA.wrong)};background:var(--s-err)"></i></span>
+    <span id="qa-progress">${QA.done} of ${QA.total} done${QA.wrong ? ` · ${QA.wrong} wrong` : ''} · ${QA.open} open</span>
+    <button class="btn small qa-toggle" id="btn-qa" aria-pressed="${qaOn}" title="Show the review status on the canvas">Review overlay</button>`;
+}
 
 document.querySelector('.sidebar').addEventListener('click', e => {
   const h = e.target.closest('[data-fnloc]'); if (h) return openInRStudio(fnLoc(h.dataset.fnloc));
+  const mp = e.target.closest('[data-map]'); if (mp) return toggleMap(mp.dataset.map);
   const b = e.target.closest('[data-goto]'); if (!b) return;
-  select({ type: 'node', id: b.dataset.goto }, true);
+  goto(b.dataset.goto);
   if (b.dataset.open) openModal(b.dataset.goto);
+});
+$('#qa-bar').addEventListener('click', e => {
+  if (!e.target.closest('#btn-qa')) return;
+  qaOn = !qaOn; renderQaBar();
 });
 
 /* ---------- Canvas interaction ---------- */
 const toWorld = (cx, cy) => { const r = canvas.getBoundingClientRect(); return { x: (cx - r.left - view.x) / view.k, y: (cy - r.top - view.y) / view.k }; };
 let drag = null, dropEl = null;
 const moved = (e, d) => Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3;
-function famAtPoint(p, exclude, rects) {
-  return Object.entries(rects).find(([f, r]) => f !== exclude && p.x > r.x0 && p.x < r.x1 && p.y > r.y0 && p.y < r.y1)?.[0] || null;
-}
 canvas.addEventListener('pointerdown', e => {
   if (e.button !== 0 || e.target.closest('.zoombar, #nodebar')) return;
+  const pill = e.target.closest('[data-map]'); if (pill) return toggleMap(pill.dataset.map);
   const port = e.target.closest('.port-out'), node = e.target.closest('.node'), del = e.target.closest('[data-del]'), hit = e.target.closest('.edge-hit'), glabel = e.target.closest('[data-gdrag]');
-  if (del) { const ed = edgeById(del.dataset.del); if (ed) unplug(ed.from, ed.to); return; }
+  if (del) { unplugView(del.dataset.del); return; }
   if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
   const w = toWorld(e.clientX, e.clientY);
-  if (port) { drag = { type: 'connect', from: port.dataset.port }; renderNodebar(); return; }
+  if (port) {
+    if (vnode(port.dataset.port)?.stack) { drag = null; return toast('Unfold the map (click its pill) to plug in a single variant.'); }
+    drag = { type: 'connect', from: port.dataset.port }; renderNodebar(); return;
+  }
   if (node) {
-    const t = S.targets[node.dataset.id];
-    drag = { type: 'node', id: t.id, ox: w.x - t.x, oy: w.y - t.y, sx: e.clientX, sy: e.clientY, moved: false, rects: groupRects(), el: node };
+    const id = node.dataset.id, t = P(id);
+    drag = { type: 'node', id, ox: w.x - t.x, oy: w.y - t.y, sx: e.clientX, sy: e.clientY, moved: false, el: node };
     return;
   }
   if (glabel) {
-    const f = glabel.dataset.gdrag, members = ids().filter(i => famOf(i) === f);
-    drag = { type: 'group', members, start: Object.fromEntries(members.map(i => [i, { x: S.targets[i].x, y: S.targets[i].y }])), wx: w.x, wy: w.y, sx: e.clientX, sy: e.clientY };
+    const b = glabel.dataset.gdrag, members = vids().filter(i => vnode(i).block === b);
+    drag = { type: 'group', members, start: Object.fromEntries(members.map(i => [i, { x: P(i).x, y: P(i).y }])), wx: w.x, wy: w.y, sx: e.clientX, sy: e.clientY };
     return;
   }
   if (hit) { drag = null; select({ type: 'edge', id: hit.dataset.edge }); return; }
@@ -1102,26 +1321,23 @@ canvas.addEventListener('pointermove', e => {
   } else if (drag.type === 'node') {
     if (!drag.moved && !moved(e, drag)) return;
     if (!drag.moved) { drag.moved = true; drag.el.classList.add('dragging'); hover = null; applyHover(); nodebar.hidden = true; }
-    const w = toWorld(e.clientX, e.clientY), t = S.targets[drag.id];
+    const w = toWorld(e.clientX, e.clientY), t = P(drag.id);
     t.x = w.x - drag.ox; t.y = w.y - drag.oy;
     drag.el.style.transform = `translate(${t.x}px,${t.y}px)`;
-    renderEdges();
-    const f = fnOf(drag.id);
-    drag.target = f ? famAtPoint({ x: t.x + NODE_W / 2, y: t.y + 20 }, f.family, drag.rects) : null;
-    renderGroups(drag.target);
+    renderEdges(); renderGroups();
   } else if (drag.type === 'group') {
     const w = toWorld(e.clientX, e.clientY), dx = w.x - drag.wx, dy = w.y - drag.wy;
-    drag.members.forEach(i => { S.targets[i].x = drag.start[i].x + dx; S.targets[i].y = drag.start[i].y + dy; });
+    drag.members.forEach(i => { P(i).x = drag.start[i].x + dx; P(i).y = drag.start[i].y + dy; });
     renderPositions();
   } else if (drag.type === 'connect') {
-    const a = S.targets[drag.from], w = toWorld(e.clientX, e.clientY);
+    const a = P(drag.from), w = toWorld(e.clientX, e.clientY);
     const x1 = a.x + NODE_W, y1 = a.y + PORT_Y, dx = Math.max(50, Math.abs(w.x - x1) * 0.5);
     tempPath = `M${x1},${y1} C${x1 + dx},${y1} ${w.x - dx},${w.y} ${w.x},${w.y}`;
     renderEdges();
     const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.node');
     if (dropEl && dropEl !== over) dropEl.classList.remove('drop-ok', 'drop-bad');
     dropEl = over;
-    if (over) { const bad = !!canConnect(drag.from, over.dataset.id); over.classList.toggle('drop-ok', !bad); over.classList.toggle('drop-bad', bad); }
+    if (over) { const bad = !!plugCheck(drag.from, over.dataset.id); over.classList.toggle('drop-ok', !bad); over.classList.toggle('drop-bad', bad); }
   }
 });
 canvas.addEventListener('pointerup', e => {
@@ -1131,33 +1347,27 @@ canvas.addEventListener('pointerup', e => {
   else if (d.type === 'node') {
     d.el.classList.remove('dragging');
     if (!d.moved) return select({ type: 'node', id: d.id });
-    if (d.target) {
-      push();
-      const f = fnOf(d.id), old = f.family, shared = usedBy(f.name).length;
-      f.family = d.target; usedBy(f.name).forEach(invalidate);
-      renderAll(); autoLayout();
-      toast(`${f.name}() moved from ${old ? '@family ' + old : 'no family'} to @family ${d.target}${shared > 1 ? ` (with all ${shared} targets that use it)` : ''}.`, true);
-    } else { renderGroups(); renderNodebar(); }
+    renderGroups(); renderNodebar();
   } else if (d.type === 'connect') {
     tempPath = ''; if (dropEl) dropEl.classList.remove('drop-ok', 'drop-bad'); dropEl = null;
     const over = document.elementFromPoint(e.clientX, e.clientY), node = over?.closest('.node');
     renderEdges(); renderNodebar();
-    if (node) connect(d.from, node.dataset.id);
+    if (node) { const why = plugCheck(d.from, node.dataset.id); if (why) toast(why); else connect(d.from, node.dataset.id); }
     else if (over && canvas.contains(over) && !over.closest('.zoombar')) { const w = toWorld(e.clientX, e.clientY); addTarget(w.x, w.y - PORT_Y, d.from); }
   }
 });
 canvas.addEventListener('pointerleave', () => { if (!drag && hover) { hover = null; applyHover(); } });
 canvas.addEventListener('dblclick', e => {
-  if (e.target.closest('.zoombar, #nodebar, .edge-hit, .g-label')) return;
+  if (e.target.closest('.zoombar, #nodebar, .edge-hit, .g-label, [data-map]')) return;
   const node = e.target.closest('.node');
-  if (node) return openModal(node.dataset.id);
+  if (node) return openModal(repOf(node.dataset.id));
   const w = toWorld(e.clientX, e.clientY); addTarget(w.x - NODE_W / 2, w.y - 30);
 });
 nodebar.addEventListener('click', e => {
   const b = e.target.closest('button'), id = S.sel?.id; if (!b || !id) return;
-  if (b.dataset.act === 'edit') openModal(id);
-  else if (b.dataset.act === 'rstudio') openInRStudio(srcLoc(id));
-  else if (b.dataset.act === 'remove') removeTarget(id);
+  if (b.dataset.act === 'edit') openModal(repOf(id));
+  else if (b.dataset.act === 'rstudio') openInRStudio(srcLoc(repOf(id)));
+  else if (b.dataset.act === 'remove') removeNode(id);
 });
 function zoomAt(f, cx, cy) {
   const k = Math.min(2, Math.max(0.25, view.k * f)), r = canvas.getBoundingClientRect();
@@ -1179,7 +1389,7 @@ $('#btn-layout').onclick = autoLayout;
 $('#btn-undo').onclick = undo;
 $('#btn-reset').onclick = () => {
   if (!undoStack.length) return toast('Nothing to discard. The view matches your files.');
-  push(); const keep = currentPos(); S = fromModel(RAW); Object.entries(keep).forEach(([i, p]) => { if (S.targets[i]) Object.assign(S.targets[i], p); });
+  push(); const keep = currentPos(); S = fromModel(RAW); VG = null; Object.entries(keep).forEach(([i, p]) => { if (vnode(i)) Object.assign(P(i), p); });
   renderAll(); autoLayout(); toast('Back to what is in your files.', true);
 };
 $('#tabs').addEventListener('click', e => {
@@ -1204,9 +1414,9 @@ document.addEventListener('keydown', e => {
   if (typing) return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel) {
     e.preventDefault();
-    if (S.sel.type === 'node') removeTarget(S.sel.id);
-    else { const ed = edgeById(S.sel.id); if (ed) unplug(ed.from, ed.to); }
-  } else if (e.key === 'Enter' && S.sel?.type === 'node') openModal(S.sel.id);
+    if (S.sel.type === 'node') removeNode(S.sel.id);
+    else unplugView(S.sel.id);
+  } else if (e.key === 'Enter' && S.sel?.type === 'node') openModal(repOf(S.sel.id));
   else if (e.key === 'Escape') select(null);
   else if (e.key.toLowerCase() === 'l' && !e.metaKey && !e.ctrlKey) autoLayout();
   else if (e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey) $('#btn-add').click();
@@ -1227,7 +1437,7 @@ const readAt = RAW.read_at ? new Date(RAW.read_at.replace(/([+-]\d\d)(\d\d)$/, '
 $('#session').innerHTML = `<code>${esc(RAW.project)}</code> · read ${readAt && !isNaN(readAt) ? readAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'from disk'} · run <code>pipeworks()</code> again to refresh`;
 updateDirty();
 renderAll();
-const p0 = computeLayout(); ids().forEach(i => Object.assign(S.targets[i], p0[i]));
+const p0 = computeLayout(); vids().forEach(i => Object.assign(P(i), p0[i]));
 renderPositions(); view = fitFor(p0); applyView();
 let resizeT; addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { view = fitFor(currentPos()); applyView(); }, 200); });
 })();

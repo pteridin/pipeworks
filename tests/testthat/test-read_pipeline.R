@@ -4,7 +4,7 @@ test_that("the example pipeline is read completely", {
   expect_s3_class(m, "pipeworks_model")
   expect_length(m$targets, 17)
   expect_length(m$functions, 11)
-  expect_equal(m$families, c("Data import", "Modelling", "Reporting"))
+  expect_null(m$families)
   modes <- table(vapply(m$targets, `[[`, "", "mode"))
   expect_equal(as.vector(modes[c("function", "expression", "factory")]), c(14, 2, 1))
   expect_setequal(vapply(m$targets, `[[`, "", "name"), c(
@@ -65,6 +65,99 @@ test_that("source files are included for the code view", {
     vapply(m$files, `[[`, "", "path"),
     c("_targets.R", "R/import.R", "R/model.R", "R/report.R", "R/utils.R", "report.Rmd")
   )
+})
+
+test_that("every target sits in the block (file) it is written in", {
+  skip_if_no_targets()
+  m <- read_example()
+  blocks <- vapply(m$targets, function(t) t$block %||% NA_character_, "")
+  names(blocks) <- vapply(m$targets, `[[`, "", "name")
+  expect_equal(unname(blocks[c("raw_file", "raw_data", "clean_data", "regions")]), rep("R/import.R", 4))
+  expect_equal(unname(blocks[c("features", "model_fit_base", "model_fit_full", "predictions")]), rep("R/model.R", 4))
+  expect_equal(unname(blocks[c("hist_raw", "region_summary", "coef_plot", "report")]), rep("R/report.R", 4))
+  # the spanning map: templates from two blocks
+  expect_equal(unname(blocks[c("area_data_urban", "area_data_rural")]), rep("R/import.R", 2))
+  expect_equal(unname(blocks[c("area_hist_urban", "area_hist_rural")]), rep("R/report.R", 2))
+  expect_equal(m$blocks, c("R/import.R", "R/model.R", "R/report.R"))
+  # functions keep their roxygen @family as plain data
+  expect_equal(by_name(m$functions, "read_survey")$family, "Data import")
+})
+
+test_that("tar_map targets know their map, template and variant", {
+  skip_if_no_targets()
+  m <- read_example()
+  expect_equal(by_name(m$targets, "model_fit_full")$map, list(id = "map:model_fit", template = "model_fit", variant = "full"))
+  expect_equal(by_name(m$targets, "area_hist_rural")$map, list(id = "map:area_data+area_hist", template = "area_hist", variant = "rural"))
+  expect_null(by_name(m$targets, "features")$map)
+
+  maps <- m$maps
+  expect_length(maps, 2)
+  ids <- vapply(maps, `[[`, "", "id")
+  fit <- maps[[which(ids == "map:model_fit")]]
+  area <- maps[[which(ids == "map:area_data+area_hist")]]
+  expect_equal(fit$templates, "model_fit")
+  expect_equal(fit$variants, c("base", "full"))
+  expect_equal(fit$param, "spec")
+  expect_equal(area$templates, c("area_data", "area_hist"))
+  expect_equal(area$variants, c("urban", "rural"))
+  expect_equal(area$param, "area")
+  expect_setequal(vapply(maps, `[[`, 1L, "color_index"), 1:2)
+})
+
+test_that("dynamic branches carry a branch count (NULL before a run)", {
+  skip_if_no_targets()
+  m <- read_example()
+  expect_true("branches" %in% names(by_name(m$targets, "region_summary")))
+  expect_null(by_name(m$targets, "region_summary")$branches)
+})
+
+test_that("outside git the model has no QA overlay", {
+  skip_if_no_targets()
+  m <- read_example()
+  expect_true("qa_summary" %in% names(m))
+  expect_null(m$qa_summary)
+  expect_null(by_name(m$targets, "raw_data")$qa)
+})
+
+test_that("in a git repository targets and functions carry their QA status", {
+  skip_if_no_targets()
+  skip_if_not(git_available())
+  repo <- example_project(file.path(withr::local_tempdir(), "s"), git = TRUE)
+  m <- read_pipeline(repo, status = FALSE)
+
+  s <- m$qa_summary
+  expect_false(is.null(s))
+  expect_equal(s$base, "main")
+  expect_equal(s$branch, "dev/sample-definition")
+  expect_equal(s$open + s$done + s$wrong, s$total)
+  expect_equal(s$wrong, 0)
+  # 3 open items + target:clean_data (check again)
+  expect_equal(s$open, 4)
+
+  cc <- by_name(m$targets, "channel_counts")$qa
+  expect_equal(cc$item, "target:channel_counts")
+  expect_equal(cc$status, "unreviewed")
+  expect_null(cc$verdict)
+  expect_true(cc$changed_vs_base)
+
+  # all variants of a template share its item
+  fit <- by_name(m$targets, "model_fit_base")$qa
+  expect_equal(fit$item, "target:model_fit")
+  expect_equal(fit$status, "correct")
+  expect_equal(fit$reviewer, "S. Senior")
+
+  sr <- by_name(m$functions, "summarise_region")$qa
+  expect_equal(sr$status, "questionable")
+  expect_equal(sr$verdict, "questionable")
+  expect_false(sr$self_reviewed)
+  expect_length(sr$history, 1)
+  expect_match(sr$history[[1]]$comment, "Group by region")
+
+  expect_equal(by_name(m$functions, "clean_survey")$qa$status, "changed")
+  expect_equal(by_name(m$targets, "clean_data")$qa$status, "check_again")
+
+  maps <- m$maps
+  expect_equal(maps[[1]]$qa$item, maps[[1]]$id)
 })
 
 test_that("a folder without _targets.R is an error", {

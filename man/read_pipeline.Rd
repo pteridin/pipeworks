@@ -10,11 +10,17 @@ read_pipeline(path = ".", status = TRUE)
 \item{path}{Root folder of the targets project, containing \verb{_targets.R}.}
 
 \item{status}{Whether to read the build status. Set to \code{FALSE} to skip the
-call to \code{\link[targets:tar_outdated]{targets::tar_outdated()}}, which can be slow for large pipelines.}
+call to \code{\link[targets:tar_outdated]{targets::tar_outdated()}}, which can be slow for large pipelines.
+Each target also carries its \code{block} (the file it is written in, from the
+static source model) and, for \code{tar_map()} variants, its \code{map} (\code{id},
+\code{template}, \code{variant}); \code{maps} lists the maps with their templates,
+variants and a colour index. In a git repository with commits every target
+and function gets its review status (\code{qa}, see \code{\link[=qa_status]{qa_status()}}) and the model
+a \code{qa_summary}; outside git both are \code{NULL}.}
 }
 \value{
 A \code{pipeworks_model}: a list with \code{project}, \code{targets}, \code{functions},
-\code{edges}, \code{families} and \code{files}.
+\code{edges}, \code{blocks}, \code{maps}, \code{qa_summary} and \code{files}.
 }
 \description{
 Combines what targets knows about the pipeline (\code{\link[targets:tar_manifest]{targets::tar_manifest()}},

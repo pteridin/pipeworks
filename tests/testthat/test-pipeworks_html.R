@@ -1,6 +1,6 @@
 fake_model <- function() {
   structure(list(project = "x", targets = list(), functions = list(), edges = list(),
-    families = character(), files = list(list(path = "R/a.R", text = "# </script> inside a comment"))),
+    blocks = character(), maps = list(), qa_summary = NULL, files = list(list(path = "R/a.R", text = "# </script> inside a comment"))),
     class = "pipeworks_model")
 }
 
