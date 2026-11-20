@@ -1,0 +1,51 @@
+test_that("a verdict is written with author, reviewer and hash", {
+  repo <- local_git_repo(list("R/a.R" = "f <- function(x) x", "_targets.R" = "list(tar_target(t1, f(1)))"),
+                         author = c("Ann", "ann@wig2.de"))
+  set_git_user(repo, "Bob", "bob@wig2.de")
+  e <- qa_review("f", "correct", path = repo)
+  expect_equal(c(e$item, e$verdict, e$reviewer_email, e$author_email), c("function:f", "correct", "bob@wig2.de", "ann@wig2.de"))
+  expect_length(list.files(file.path(repo, "qa", "reviews")), 1)
+})
+
+test_that("ambiguous names, missing comments and uncommitted code are refused", {
+  repo <- local_git_repo(list("R/a.R" = "f <- function(x) x", "_targets.R" = "list(tar_target(f, f(1)))"))
+  expect_error(qa_review("f", "correct", path = repo), "function:f.*target:f")
+  expect_error(qa_review("function:f", "wrong", path = repo), "comment")
+  writeLines("f <- function(x) x + 1", file.path(repo, "R/a.R"))
+  expect_error(qa_review("function:f", "correct", path = repo), "Commit")
+})
+
+test_that("unknown items list close matches; no commits is refused", {
+  repo <- local_git_repo(list("R/a.R" = "clean_cs <- function(x) x"))
+  expect_error(qa_review("clean_c", "correct", path = repo), "function:clean_cs")
+  expect_error(qa_review("zzz", "correct", path = repo), "Unknown item")
+  proj <- local_project(list("R/a.R" = "f <- function(x) x"))
+  expect_error(qa_review("f", "correct", path = proj), "Commit")
+})
+
+test_that("entries round-trip through the ledger with depends", {
+  repo <- local_git_repo(list(
+    "R/a.R" = c("g <- function(x) x", "f <- function(x) g(x)"),
+    "_targets.R" = "list(tar_target(t1, f(1)))"
+  ))
+  e <- qa_review("f", "questionable", "check bands", path = repo)
+  expect_named(e$depends, "function:g")
+  t <- qa_review("t1", "correct", path = repo)
+  expect_named(t$depends, "function:f")
+  g <- qa_review("g", "correct", path = repo)
+  expect_equal(length(g$depends), 0)
+  r <- read_reviews(repo)
+  expect_equal(nrow(r), 3)
+  expect_true(all(c("item", "hash", "verdict", "comment", "reviewer", "reviewer_email", "author",
+                    "author_email", "date", "commit", "depends") %in% names(r)))
+  expect_equal(r$depends[[which(r$item == "function:f")]], list("function:g" = e$depends[[1]]))
+  expect_equal(nrow(read_reviews(local_project(list("x" = "y")))), 0)
+})
+
+test_that("people map several emails to one person", {
+  proj <- local_project(list("qa/people" = c("Name: Ann Example", "Emails: ann@wig2.de, Ann.E@gitlab.local", "",
+                                              "Name: Bob", "Emails: bob@wig2.de")))
+  p <- read_people(proj)
+  expect_equal(person_of(c("ANN@wig2.de", "ann.e@gitlab.local", "x@y.z"), p), c("Ann Example", "Ann Example", "x@y.z"))
+  expect_equal(person_of("a@b", read_people(local_project(list("x" = "y")))), "a@b")
+})
