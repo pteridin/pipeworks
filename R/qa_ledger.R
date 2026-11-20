@@ -46,7 +46,13 @@ write_review <- function(path, entry) {
   dir.create(dir, recursive = TRUE, showWarnings = FALSE)
   stamp <- format(as.POSIXct(entry$date, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"), "%Y%m%dT%H%M%SZ", tz = "UTC")
   slug <- gsub("[^A-Za-z0-9]", "_", entry$item)
-  file <- file.path(dir, sprintf("%s-%s-%s.json", stamp, slug, substr(entry$hash, 1, 7)))
+  base <- sprintf("%s-%s-%s", stamp, slug, substr(entry$hash, 1, 7))
+  file <- file.path(dir, paste0(base, ".json"))
+  n <- 1
+  while (file.exists(file)) {
+    n <- n + 1
+    file <- file.path(dir, sprintf("%s-%d.json", base, n))
+  }
   if (is.null(entry$depends) || !length(entry$depends)) {
     entry$depends <- structure(list(), names = character())
   }

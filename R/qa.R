@@ -24,13 +24,17 @@ qa_review <- function(item, verdict = c("correct", "questionable", "wrong"), com
     stop("Commit ", row$file, " first: ", row$id, " has uncommitted changes.", call. = FALSE)
   }
 
+  who <- git_user(path)
+  if (is.na(who$email) || is.na(who$name)) {
+    stop("Your git identity is not set; verdicts are matched by email. Run `git config user.name \"Your Name\"` and `git config user.email you@example.org`.", call. = FALSE)
+  }
+
   hashes <- stats::setNames(items$hash, items$id)
   dep_names <- if (row$kind == "function") row$calls[[1]] else if (!is.na(row$fn)) row$fn else character()
   dep_ids <- unique(paste0("function:", dep_names))
   dep_ids <- dep_ids[dep_ids %in% names(hashes)]
   depends <- if (length(dep_ids)) as.list(hashes[dep_ids]) else structure(list(), names = character())
 
-  who <- git_user(path)
   auth <- last_authors(path, items[items$id == row$id, , drop = FALSE])
   entry <- list(
     item = row$id,
