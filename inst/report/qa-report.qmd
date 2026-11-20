@@ -1,0 +1,179 @@
+---
+format:
+  typst:
+    papersize: a4
+    margin:
+      x: 2cm
+      y: 2.2cm
+---
+
+```{=typst}
+// QA report template. All content comes from qa-data.json, written by
+// pipeworks::qa_report(). Plain Typst: no R runs while rendering.
+#let d = json("qa-data.json")
+#let ink = rgb("#1f2933")
+#let muted = rgb("#6b7785")
+#let rule = rgb("#cfd6dd")
+#let green = rgb("#2f7d4f")
+#let amber = rgb("#b26a00")
+#let red = rgb("#b3261e")
+
+#let verdicts = (
+  correct: ("Correct", green),
+  check_again: ("Correct, callee changed: check again", amber),
+  questionable: ("Questionable", amber),
+  wrong: ("Wrong", red),
+  unreviewed: ("Open: not reviewed", red),
+  changed: ("Open: changed since review", red),
+  self_reviewed: ("Open: reviewed by its author", red),
+)
+#let verdict-cell(v) = {
+  let entry = verdicts.at(v, default: (v, red))
+  text(fill: entry.at(1), weight: "bold", entry.at(0))
+}
+#let names(list) = if list.len() == 0 { [not available] } else { list.join(", ") }
+#let tile(value, label, color: ink) = block(
+  width: 100%, inset: 10pt, radius: 4pt, stroke: 0.6pt + rule,
+  align(center)[
+    #text(size: 24pt, weight: "bold", fill: color)[#value] \
+    #text(size: 9pt, fill: muted)[#label]
+  ],
+)
+
+#set text(size: 10pt, fill: ink)
+#set par(justify: false, leading: 0.6em)
+#set page(
+  header: if not d.passed {
+    align(center, block(width: 100%, fill: red, inset: 5pt, radius: 2pt,
+      text(fill: white, weight: "bold", size: 10pt)[DRAFT – QA incomplete]))
+  },
+  footer: context [
+    #set text(size: 8pt, fill: muted)
+    #d.project
+    #if d.commit != none [ · commit #d.commit]
+    #h(1fr)
+    Page #counter(page).display() of #counter(page).final().first()
+  ],
+)
+
+// ---- Cover ----
+#v(1.5cm)
+#if d.organisation != none [
+  #text(size: 11pt, fill: muted, weight: "bold", d.organisation) \
+]
+#text(size: 26pt, weight: "bold")[#d.title] \
+#text(size: 15pt, fill: muted)[#d.project]
+#v(0.6cm)
+
+#table(
+  columns: (auto, 1fr), stroke: none, inset: (x: 0pt, y: 4pt), column-gutter: 14pt,
+  text(fill: muted)[Code version],
+  [#if d.ref != none [#d.ref] else [not under version control]#if d.commit != none [ · commit #raw(d.commit)]],
+  text(fill: muted)[Analyst(s)], names(d.analysts),
+  text(fill: muted)[Reviewer(s)], names(d.reviewers),
+  text(fill: muted)[Created], d.date,
+)
+#v(0.4cm)
+
+#grid(
+  columns: (1fr,) * 4, column-gutter: 8pt,
+  tile(d.counts.items, [items]),
+  tile(d.counts.correct, [correct], color: green),
+  tile(d.counts.questionable, [questionable], color: amber),
+  tile(d.counts.wrong_open, [wrong or open], color: if d.counts.wrong_open > 0 { red } else { ink }),
+)
+#v(0.5cm)
+
+#if d.passed [
+  Every function and target definition in this code version was reviewed by a second analyst who did not write it. Each verdict refers to the exact code identified by its hash; code that changed after a review was reviewed again.
+] else [
+  #block(stroke: 1pt + red, inset: 10pt, radius: 3pt)[
+    *This report does not confirm the review.* #d.counts.wrong_open item(s) are wrong or still open, so the QA check does not pass for this code version. The list of open items follows below.
+  ]
+]
+
+#v(0.5cm)
+#text(weight: "bold")[Pipeline blocks]
+#v(2pt)
+#text(size: 8.5pt, fill: muted)[Each box is a source file. Arrows point from the block that provides code or data to the block that uses it.]
+#v(4pt)
+#let level-count = d.levels.len()
+#grid(
+  columns: range(level-count).map(_ => (1fr, auto)).flatten().slice(0, -1),
+  column-gutter: 4pt, row-gutter: 6pt,
+  ..range(level-count).map(i => {
+    let boxes = d.levels.at(i).map(b => block(
+      width: 100%, inset: 6pt, radius: 3pt, stroke: 0.6pt + rule, fill: rgb("#f4f6f8"),
+      text(size: 8.5pt, raw(b)),
+    ))
+    let col = stack(dir: ttb, spacing: 5pt, ..boxes)
+    if i < level-count - 1 { (col, align(horizon, text(fill: muted, size: 14pt)[→])) } else { (col,) }
+  }).flatten(),
+)
+
+// ---- Open items ----
+#if d.open.len() > 0 [
+  #pagebreak()
+  = Open items
+  The following items do not have a valid review yet.
+  #v(4pt)
+  #table(
+    columns: (1fr, auto, auto), stroke: (x: none, y: 0.4pt + rule), inset: 5pt,
+    table.header([*Item*], [*Block*], [*State*]),
+    ..d.open.map(o => (raw(o.id), text(size: 9pt)[#o.block], verdict-cell(o.verdict))).flatten(),
+  )
+]
+
+// ---- Findings ----
+#pagebreak()
+= Findings by block
+#for b in d.blocks [
+  == #raw(b.block)
+  #table(
+    columns: (auto, 1fr, auto, auto, auto, auto), stroke: (x: none, y: 0.4pt + rule),
+    inset: 5pt, align: (left, left, left, left, left, left),
+    table.header([*Item*], [*Title*], [*Verdict*], [*Reviewer*], [*Date*], [*Hash*]),
+    ..b.items.map(i => (
+      text(size: 8.5pt, raw(i.id)),
+      text(size: 9pt, i.title),
+      text(size: 9pt, verdict-cell(i.verdict)),
+      text(size: 9pt, if i.reviewer != none { i.reviewer } else { [–] }),
+      text(size: 9pt, if i.date != none { i.date } else { [–] }),
+      text(size: 8pt, raw(i.hash7)),
+      ..if i.comment != none {
+        (table.cell(colspan: 6, inset: (left: 14pt, y: 4pt),
+          text(size: 9pt, style: "italic", fill: muted)[Comment: #i.comment]),)
+      } else { () },
+    )).flatten(),
+  )
+  #v(6pt)
+]
+
+// ---- Review history ----
+#if d.history.len() > 0 [
+  = Review history
+  Merges that brought review entries into this code version.
+  #v(4pt)
+  #table(
+    columns: (1fr, auto, auto, auto), stroke: (x: none, y: 0.4pt + rule), inset: 5pt,
+    table.header([*Branch*], [*Items*], [*Review rounds*], [*Merged*]),
+    ..d.history.map(h => (raw(h.branch), [#h.items], [#h.rounds], h.merged)).flatten(),
+  )
+]
+
+// ---- Signatures ----
+#v(1cm)
+#block(breakable: false)[
+  #if d.signatures [
+    = Signatures
+    #v(1.2cm)
+    #grid(
+      columns: (1fr, 1fr), column-gutter: 1.5cm,
+      [#line(length: 100%, stroke: 0.6pt) Analyst: #names(d.analysts) \ Date, signature],
+      [#line(length: 100%, stroke: 0.6pt) Reviewer: #names(d.reviewers) \ Date, signature],
+    )
+  ] else [
+    #text(fill: muted)[This report was generated digitally and is valid without signature.]
+  ]
+]
+```

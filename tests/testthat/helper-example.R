@@ -82,3 +82,29 @@ commit_as <- function(repo, file, lines, author = c("Ann", "ann@wig2.de"), messa
   )
   invisible(git_cmd(repo, "rev-parse", "HEAD")[1])
 }
+
+# A small committed repo (author Ann) with three functions in two blocks and
+# two targets. Bob reviewed every item `correct` except `function:g`
+# (`questionable`, with a comment); the review entries are committed. Returns
+# the path; the repo-local git identity is Ann again afterwards.
+reviewed_repo <- function(env = parent.frame()) {
+  repo <- local_git_repo(list(
+    "R/a.R" = c(
+      "#' Constant one", "#'", "#' @return One.", "f <- function() 1",
+      "",
+      "#' Add one to the input", "g <- function(x) x + f()"
+    ),
+    "R/b.R" = c("#' Double the input", "h <- function(x) g(x) * 2"),
+    "_targets.R" = c("library(targets)", "list(", "  tar_target(t1, g(1)),", "  tar_target(t2, h(t1))", ")")
+  ), author = c("Ann", "ann@wig2.de"), env = env)
+  set_git_user(repo, "Bob", "bob@wig2.de")
+  st <- qa_status(repo)
+  suppressMessages(for (id in st$id) {
+    if (id == "function:g") qa_review(id, "questionable", "Edge case x = NA not handled", path = repo)
+    else qa_review(id, "correct", path = repo)
+  })
+  git_cmd(repo, "add", "-A")
+  git_cmd(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", shQuote("reviews"))
+  set_git_user(repo, "Ann", "ann@wig2.de")
+  repo
+}
