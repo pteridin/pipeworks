@@ -28,8 +28,6 @@ test_that("example with git gives a realistic review round", {
 
   # the senior reviews the open items: the check passes
   suppressMessages(for (id in open) qa_review(id, "correct", path = repo))
-  git_run(repo, c("add", "-A"))
-  git_run(repo, c("-c", "commit.gpgsign=false", "commit", "-q", "-m", "reviews"))
   expect_no_error(suppressMessages(capture.output(qa_check(repo), type = "message")))
 })
 

@@ -109,8 +109,6 @@ reviewed_repo <- function(env = parent.frame()) {
     if (id == "function:g") qa_review(id, "questionable", "Edge case x = NA not handled", path = repo)
     else qa_review(id, "correct", path = repo)
   })
-  git_cmd(repo, "add", "-A")
-  git_cmd(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", shQuote("reviews"))
   set_git_user(repo, "Ann", "ann@wig2.de")
   repo
 }

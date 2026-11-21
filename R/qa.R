@@ -1,7 +1,7 @@
 #' Record a review verdict for an item
 #'
-#' Writes one JSON file to `qa/reviews/`. Commit it so the verdict travels with
-#' the branch. Verdicts are only possible for committed code: every code file
+#' Writes one JSON file to `qa/reviews/` and commits it right away, alone (one
+#' commit per verdict; other staged work stays staged). Verdicts are only possible for committed code: every code file
 #' (`R/`, `_targets.R`, report sources) must be committed, and the item's last
 #' author must be known from the git history.
 #'
@@ -9,62 +9,18 @@
 #' @param verdict `"correct"`, `"questionable"` or `"wrong"`.
 #' @param comment Required for `"questionable"` and `"wrong"`.
 #' @param path Project root.
+#' @param commit If `FALSE`, only write the entry and leave committing to you.
 #' @return The entry (a list), invisibly.
 #' @export
-qa_review <- function(item, verdict = c("correct", "questionable", "wrong"), comment = NULL, path = ".") {
-  check_project(path)
+qa_review <- function(item, verdict = c("correct", "questionable", "wrong"), comment = NULL, path = ".", commit = TRUE) {
   verdict <- match.arg(verdict)
-  if (!git_available()) stop("`git` was not found on the PATH; qa_review() needs it.", call. = FALSE)
-  if (verdict != "correct" && (is.null(comment) || !nzchar(trimws(paste(comment, collapse = ""))))) {
-    stop("A comment is required for verdict \"", verdict, "\".", call. = FALSE)
+  res <- record_verdict(path, item, verdict, comment, commit = commit)
+  if (!isTRUE(res$committed) && commit) {
+    stop("The verdict was saved to ", res$file, " but not committed: ", res$error, call. = FALSE)
   }
-  src <- read_source(path)
-  items <- src$items
-  row <- resolve_item(item, items)
-
-  if (is.na(git_head(path))) stop("Commit your code first: this project has no commits yet.", call. = FALSE)
-  if (!git_file_clean(path, row$file)) {
-    stop("Commit ", row$file, " first: ", row$id, " has uncommitted changes.", call. = FALSE)
-  }
-  # An item can depend on other files (callees, map templates), so the whole
-  # code tree must be committed before a verdict names a code version.
-  dirty <- uncommitted_code(path, items)
-  if (length(dirty)) {
-    stop("Commit ", paste(dirty, collapse = ", "), " first: verdicts are only recorded for committed code, ",
-         "and ", row$id, " may depend on it.", call. = FALSE)
-  }
-
-  who <- git_user(path)
-  if (is.na(who$email) || is.na(who$name)) {
-    stop("Your git identity is not set; verdicts are matched by email. Run `git config user.name \"Your Name\"` and `git config user.email you@example.org`.", call. = FALSE)
-  }
-
-  hashes <- stats::setNames(items$hash, items$id)
-  dep_names <- if (row$kind == "function") row$calls[[1]] else if (!is.na(row$fn)) row$fn else character()
-  dep_ids <- unique(paste0("function:", dep_names))
-  dep_ids <- dep_ids[dep_ids %in% names(hashes)]
-  depends <- if (length(dep_ids)) as.list(hashes[dep_ids]) else structure(list(), names = character())
-
-  auth <- last_authors(path, items[items$id == row$id, , drop = FALSE])
-  if (is.na(auth$author_email)) {
-    stop("Cannot tell who last changed ", row$id, " from the git history, so the four-eyes rule cannot be ",
-         "checked. Commit every file it depends on (and make sure git does not ignore them).", call. = FALSE)
-  }
-  entry <- list(
-    item = row$id,
-    hash = row$hash,
-    verdict = verdict,
-    comment = if (is.null(comment)) NA_character_ else paste(comment, collapse = "\n"),
-    reviewer = who$name,
-    reviewer_email = who$email,
-    author = auth$author_name,
-    author_email = auth$author_email,
-    date = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC"),
-    commit = git_head(path),
-    depends = depends
-  )
-  write_review(path, entry)
-  message("\u2714 ", row$id, ": ", verdict, " (hash ", substr(row$hash, 1, 7), ")")
+  entry <- res$entry
+  message("\u2714 ", entry$item, ": ", verdict, " (hash ", substr(entry$hash, 1, 7), ")",
+          if (isTRUE(res$committed)) paste0(", committed ", substr(res$commit, 1, 7)))
   invisible(entry)
 }
 

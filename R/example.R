@@ -67,7 +67,7 @@ example_git_scenario <- function(path) {
   set_user(analyst)
   commit(analyst, "Survey pipeline")
 
-  # The senior reviews every item of main.
+  # The senior reviews every item of main; each verdict commits itself.
   set_user(senior)
   comment <- paste(
     "summarise_region() has no @family documentation, unlike the other reporting functions,",
@@ -78,7 +78,6 @@ example_git_scenario <- function(path) {
     if (id == "function:summarise_region") qa_review(id, "questionable", comment, path = path)
     else qa_review(id, "correct", path = path)
   })
-  commit(senior, "QA review of main")
 
   # The analyst's fresh changes on a dev branch.
   git_run(path, c("checkout", "-q", "-b", "dev/sample-definition"))

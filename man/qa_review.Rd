@@ -8,7 +8,8 @@ qa_review(
   item,
   verdict = c("correct", "questionable", "wrong"),
   comment = NULL,
-  path = "."
+  path = ".",
+  commit = TRUE
 )
 }
 \arguments{
@@ -19,13 +20,15 @@ qa_review(
 \item{comment}{Required for \code{"questionable"} and \code{"wrong"}.}
 
 \item{path}{Project root.}
+
+\item{commit}{If \code{FALSE}, only write the entry and leave committing to you.}
 }
 \value{
 The entry (a list), invisibly.
 }
 \description{
-Writes one JSON file to \verb{qa/reviews/}. Commit it so the verdict travels with
-the branch. Verdicts are only possible for committed code: every code file
+Writes one JSON file to \verb{qa/reviews/} and commits it right away, alone (one
+commit per verdict; other staged work stays staged). Verdicts are only possible for committed code: every code file
 (\verb{R/}, \verb{_targets.R}, report sources) must be committed, and the item's last
 author must be known from the git history.
 }

@@ -29,8 +29,6 @@ test_that("check_again passes and is counted as correct in the report", {
                              "", "#' Add one to the input", "g <- function(x) x + f() + 0"))
   set_git_user(repo, "Bob", "bob@wig2.de")
   suppressMessages(qa_review("function:g", "questionable", "still x = NA", path = repo))
-  git_cmd(repo, "add", "-A")
-  git_cmd(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "rereview")
   st <- qa_status(repo)
   expect_true(any(st$status == "check_again"))
   expect_message(expect_message(qa_check(repo), "check again: function:h, target:t1"), "passed")

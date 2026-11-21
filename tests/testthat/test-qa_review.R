@@ -73,7 +73,6 @@ test_that("entries written in quick succession are returned in write order (mill
   repo <- local_git_repo(list("R/a.R" = "f <- function(x) x", "_targets.R" = "list(tar_target(t1, f(1)))"))
   set_git_user(repo, "Bob", "bob@wig2.de")
   suppressMessages(qa_review("f", "wrong", "first", path = repo))
-  git_cmd(repo, "add", "-A")
   commit_as(repo, "R/a.R", "f <- function(x) x + 1")
   suppressMessages(qa_review("f", "questionable", "second", path = repo))
   commit_as(repo, "R/a.R", "f <- function(x) x + 2")
