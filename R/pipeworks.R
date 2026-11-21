@@ -16,13 +16,20 @@
 #' again reuses it (open tabs keep working) and shows the editor again. It
 #' stops with [pipeworks_stop()] or when the R session ends.
 #'
+#' On RStudio Server and Posit Workbench the page is reached through the
+#' server's proxy; that address is allowed automatically. If the page still
+#' answers "Forbidden host" or "Forbidden origin" (it shows what it received),
+#' allow the address with `options(pipeworks.allowed_origins =
+#' "https://your.server")`.
+#'
 #' @param path Root folder of the targets project, containing `_targets.R`.
 #' @param viewer Whether to use the RStudio Viewer pane when available.
 #' @param mode `"review"` (structure read-only, verdict buttons), `"build"`
 #'   (editing, no verdict buttons) or `"auto"`: Review when there are open
 #'   items (not passing [qa_check()]) last changed by someone other than the
 #'   current git user, else Build. The page can switch modes at any time.
-#' @return The address of the editor, invisibly.
+#' @return The address of the editor (on RStudio Server the proxied one),
+#'   invisibly.
 #' @seealso [pipeworks_html()] for a static snapshot without a server.
 #' @export
 #' @examples
@@ -47,8 +54,10 @@ pipeworks <- function(path = ".", viewer = getOption("pipeworks.viewer", TRUE), 
     state <- pw_start(key, mode)
     assign(key, state, envir = pw_servers)
   }
-  url <- pw_url(state)
-  show_url(url, viewer)
+  # the Viewer translates local addresses itself; a browser needs the public one
+  in_viewer <- isTRUE(viewer) && requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()
+  url <- pw_public_url(state)
+  show_url(if (in_viewer) pw_url(state) else url, viewer)
   invisible(url)
 }
 

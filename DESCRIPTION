@@ -18,7 +18,7 @@ Depends:
     R (>= 4.1.0)
 Imports:
     callr,
-    httpuv,
+    httpuv (>= 1.5.2),
     jsonlite,
     later,
     roxygen2,
@@ -30,6 +30,7 @@ Suggests:
     curl,
     dplyr,
     ggplot2,
+    openssl,
     readr,
     rmarkdown,
     rstudioapi,

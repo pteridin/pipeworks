@@ -7,8 +7,11 @@
 #   POST /api/retry     retry_uncommitted()
 #   POST /api/open      {item} -> open its file at its line
 #
-# Every request must name the server's own host; API calls carry the token in
-# `X-Pipeworks-Token`; POSTs with a foreign `Origin` are refused.
+# Every request must name an allowed host (127.0.0.1:<port>, localhost:<port>,
+# the RStudio Server address, `pipeworks.allowed_origins`); API calls carry
+# the token in `X-Pipeworks-Token`; POSTs with a foreign `Origin` are refused.
+# Served pages use relative addresses only (`api/...`, `?token=`), so they
+# also work below a proxy path.
 
 pw_routes <- c(
   "/api/version" = "GET", "/api/model" = "GET",
@@ -25,11 +28,12 @@ pw_app <- function(state) {
 pw_handle <- function(state, req) {
   method <- req$REQUEST_METHOD %||% ""
   route <- req$PATH_INFO %||% "/"
-  hosts <- paste0(c("127.0.0.1:", "localhost:"), state$port)
-  if (!isTRUE((req$HTTP_HOST %||% "") %in% hosts)) return(pw_text("Forbidden host.", 403L))
+  allowed <- pw_allowed(state)
+  host <- req$HTTP_HOST
   origin <- req$HTTP_ORIGIN
-  if (method == "POST" && !is.null(origin) && !origin %in% paste0("http://", hosts)) {
-    return(pw_text("Forbidden origin.", 403L))
+  if (!isTRUE((host %||% "") %in% allowed$hosts)) return(pw_forbidden("host", host, origin))
+  if (method == "POST" && !is.null(origin) && !origin %in% allowed$origins) {
+    return(pw_forbidden("origin", host, origin))
   }
 
   if (route %in% c("/", "/index.html")) {
@@ -87,7 +91,8 @@ pw_api_open <- function(state, body) {
   row <- if (is.null(items)) integer() else which(items$id == body$item)
   if (!length(row)) return(pw_json(list(error = paste0("Unknown item: ", body$item)), 404L))
   row <- row[1]
-  state$open_file(file.path(state$path, items$file[row]), items$line1[row])
+  res <- state$open_file(file.path(state$path, items$file[row]), items$line1[row])
+  if (is.list(res) && isFALSE(res$ok)) return(pw_json(list(ok = FALSE, error = res$error %||% "Cannot open the file.")))
   pw_json(list(ok = TRUE))
 }
 
@@ -150,5 +155,5 @@ pw_locked_page <- paste0(
   '<!doctype html><meta charset="utf-8"><title>pipeworks</title>',
   '<p>This pipeworks page needs its access token. Run <code>pipeworks()</code> in R again.</p>',
   '<script>try{var t=sessionStorage.getItem("pipeworks-token");',
-  'if(t&&location.search.indexOf("token=")<0)location.replace("/?token="+encodeURIComponent(t));}catch(e){}</script>'
+  'if(t&&location.search.indexOf("token=")<0)location.replace("?token="+encodeURIComponent(t));}catch(e){}</script>'
 )

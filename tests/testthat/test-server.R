@@ -18,7 +18,7 @@ local_state <- function(path, opened = NULL, env = parent.frame()) {
 }
 
 fake_req <- function(state, method = "GET", path = "/", query = "", token = state$token,
-                     host = paste0("127.0.0.1:", state$port), origin = NULL, body = NULL) {
+                     host = paste0("127.0.0.1:", state$port), origin = NULL, body = NULL, raw_body = NULL) {
   req <- new.env()
   req$REQUEST_METHOD <- method
   req$PATH_INFO <- path
@@ -26,7 +26,7 @@ fake_req <- function(state, method = "GET", path = "/", query = "", token = stat
   req$HTTP_HOST <- host
   if (!is.null(token)) req$HTTP_X_PIPEWORKS_TOKEN <- token
   if (!is.null(origin)) req$HTTP_ORIGIN <- origin
-  bytes <- if (is.null(body)) raw() else charToRaw(as.character(jsonlite::toJSON(body, auto_unbox = TRUE)))
+  bytes <- if (!is.null(raw_body)) charToRaw(raw_body) else if (is.null(body)) raw() else charToRaw(as.character(jsonlite::toJSON(body, auto_unbox = TRUE)))
   req$rook.input <- list(read = function(l = -1L) bytes, rewind = function() invisible())
   req
 }
@@ -46,6 +46,9 @@ test_that("requests without the token, from a foreign host or origin are refused
   expect_equal(call_app(state, path = "/api/version", host = "evil.example:4321")$status, 403L)
   expect_equal(call_app(state, path = "/api/version", host = "127.0.0.1:9999")$status, 403L)
   expect_equal(call_app(state, method = "POST", path = "/api/retry", origin = "http://evil.example")$status, 403L)
+  expect_equal(call_app(state, method = "POST", path = "/api/retry", origin = "null")$status, 403L)
+  expect_equal(call_app(state, method = "POST", path = "/api/retry", origin = "http://localhost:4321")$status, 200L)
+  expect_equal(call_app(state, method = "POST", path = "/api/verdict", raw_body = "{item: oops")$status, 400L)
   expect_equal(call_app(state, path = "/", token = NULL)$status, 403L)
   ok <- call_app(state, path = "/api/version", host = "localhost:4321")
   expect_equal(ok$status, 200L)
@@ -213,7 +216,148 @@ test_that("the server answers real HTTP requests", {
     res
   }
   ok <- fetch("/api/version", c("X-Pipeworks-Token" = token))
+  expect_false(is.null(ok))
   expect_equal(ok$status_code, 200L)
   expect_type(jsonlite::fromJSON(rawToChar(ok$content))$version, "integer")
   expect_equal(fetch("/api/version")$status_code, 403L)
+})
+
+test_that("a syntax error in R/ keeps the review layer and says why", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  state$model <- attach_qa(state$model, repo, state$items)
+  file <- file.path(repo, "R", "report.R")
+  good <- readLines(file)
+  v0 <- state$version
+  cat("broken <- function( {\n", file = file, append = TRUE)
+  expect_equal(pw_tick(state), "code")
+  pw_kill_bg(state)
+  expect_false(is.null(state$model$qa_summary))
+  expect_false(is.null(state$items))
+  expect_match(state$qa_error, "R/report.R")
+  expect_gt(state$version, v0)
+  expect_true("report.Rmd" %in% basename(names(state$fingerprint$code)))
+  expect_equal(call_app(state, method = "POST", path = "/api/open", body = list(item = "function:count_by_channel"))$status, 200L)
+  expect_match(call_app(state, path = "/api/model")$json$live$qa_error, "R/report.R")
+  writeLines(good, file)
+  pw_tick(state)
+  pw_kill_bg(state)
+  expect_null(state$qa_error)
+})
+
+test_that("warnings in a refresh are not failures unless the result is unusable", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  local_mocked_bindings(attach_qa = function(model, path, items) {
+    warning("minor")
+    model$qa_summary <- list(total = 99L)
+    model
+  })
+  expect_no_warning(pw_refresh_qa(state))
+  expect_equal(state$model$qa_summary$total, 99L)
+  expect_null(state$qa_error)
+  local_mocked_bindings(attach_qa = function(model, path, items) {
+    warning("Cannot read the QA status: nope")
+    model$qa_summary <- NULL
+    model
+  })
+  expect_no_warning(pw_refresh_qa(state))
+  expect_equal(state$model$qa_summary$total, 99L)
+  expect_match(state$qa_error, "Cannot read the QA status")
+})
+
+test_that("RStudio Server addresses can be allowed", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  req <- list(method = "POST", path = "/api/retry", host = "rstudio.example.org", origin = "https://rstudio.example.org")
+  res <- do.call(call_app, c(list(state), req))
+  expect_equal(res$status, 403L)
+  expect_match(res$headers[["Content-Type"]], "text/plain")
+  expect_equal(res$headers[["X-Content-Type-Options"]], "nosniff")
+  expect_match(res$body, "rstudio.example.org", fixed = TRUE)
+  expect_match(res$body, "pipeworks.allowed_origins", fixed = TRUE)
+  withr::with_options(list(pipeworks.allowed_origins = "https://rstudio.example.org"), {
+    expect_equal(do.call(call_app, c(list(state), req))$status, 200L)
+  })
+  pw_allow(state, pw_origin_of("https://rstudio.example.org/s/abc/p/1f2e/?token=x"))
+  expect_true("rstudio.example.org" %in% state$hosts)
+  expect_equal(do.call(call_app, c(list(state), req))$status, 200L)
+  expect_equal(call_app(state, path = "/api/version")$status, 200L)
+})
+
+test_that("served pages only use relative addresses", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  expect_match(pw_locked_page, 'location.replace("?token="', fixed = TRUE)
+  expect_no_match(pw_locked_page, '"/?token', fixed = TRUE)
+  html <- call_app(state, path = "/", token = NULL, query = paste0("token=", state$token))$body
+  expect_no_match(html, "[\"'`(]/api/")
+})
+
+test_that("a busy repository blocks verdicts with the reason", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  file.create(file.path(repo, ".git", "MERGE_HEAD"))
+  live <- call_app(state, path = "/api/model")$json$live
+  expect_false(live$can_record)
+  expect_true("merge in progress" %in% unlist(live$blockers))
+})
+
+test_that("open outside an interactive GUI session asks the user to open the file", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  state$open_file <- open_in_editor
+  res <- call_app(state, method = "POST", path = "/api/open", body = list(item = "function:count_by_channel"))
+  expect_equal(res$status, 200L)
+  expect_false(res$json$ok)
+  expect_match(res$json$error, "report.R:[0-9]+ yourself")
+})
+
+test_that("auto mode falls back to build when it cannot tell", {
+  repo <- local_example_repo()
+  local_mocked_bindings(last_authors = function(...) stop("no history"))
+  expect_message(mode <- resolve_mode(repo, "auto"), "no history")
+  expect_equal(mode, "build")
+})
+
+test_that("watcher errors reach the page and clear on success", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  v0 <- state$version
+  local_mocked_bindings(pw_poll_bg = function(state) stop("boom"))
+  pw_watch_step(state)
+  expect_match(state$watch_error, "boom")
+  expect_equal(state$version, v0 + 1L)
+  expect_match(call_app(state, path = "/api/model")$json$live$watch_error, "boom")
+  local_mocked_bindings(pw_poll_bg = function(state) FALSE)
+  pw_watch_step(state)
+  expect_null(state$watch_error)
+  expect_equal(state$version, v0 + 2L)
+})
+
+test_that("tokens are 32 hex digits from every source", {
+  expect_match(pw_token(), "^[0-9a-f]{32}$")
+  a <- pw_token_mixed()
+  expect_match(a, "^[0-9a-f]{32}$")
+  expect_false(identical(a, pw_token_mixed()))
+})
+
+test_that("on RStudio Server the translated address is shown and allowed; unloading stops servers", {
+  repo <- local_example_repo()
+  shown <- character()
+  local_mocked_bindings(
+    read_pipeline = function(path, ...) server_model(),
+    show_url = function(url, viewer) shown <<- c(shown, url),
+    pw_rstudio_server_url = function(url) sub("^http://127\\.0\\.0\\.1:[0-9]+/", "https://rs.example.org/p/ab12/", url)
+  )
+  withr::defer(pipeworks_stop(repo))
+  url <- pipeworks(repo, viewer = FALSE, mode = "review")
+  expect_match(url, "^https://rs\\.example\\.org/p/ab12/\\?token=[0-9a-f]{32}$")
+  expect_equal(shown, url)
+  state <- pw_servers[[repo]]
+  expect_true("https://rs.example.org" %in% state$origins)
+  expect_true("rs.example.org" %in% state$hosts)
+  expect_true(paste0("127.0.0.1:", state$port) %in% state$hosts)
+  pw_stop_all()
+  expect_false(pipeworks_stop(repo))
 })

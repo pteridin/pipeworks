@@ -9,7 +9,8 @@ pw_servers <- new.env(parent = emptyenv())
 
 # State of one project's server (an environment, shared by the handler, the
 # watcher and `pipeworks()`). `model = NULL` reads the pipeline now.
-# `open_file(file, line)` opens a source file (stubbed in tests).
+# `open_file(file, line)` opens a source file (stubbed in tests); it may
+# return `list(ok = FALSE, error = )` when it cannot.
 pw_state <- function(path, model = NULL, mode = "auto", port = NA_integer_, token = pw_token(),
                      open_file = open_in_editor) {
   path <- normalizePath(path, mustWork = TRUE)
@@ -18,6 +19,7 @@ pw_state <- function(path, model = NULL, mode = "auto", port = NA_integer_, toke
   state$model <- if (is.null(model)) read_pipeline(path) else model
   state$model_error <- NULL
   state$qa_error <- NULL
+  state$watch_error <- NULL
   state$mode <- resolve_mode(path, mode)
   state$port <- as.integer(port)
   state$token <- token
@@ -26,28 +28,13 @@ pw_state <- function(path, model = NULL, mode = "auto", port = NA_integer_, toke
   state$bg <- NULL
   state$server <- NULL
   state$alive <- TRUE
+  state$hosts <- character()
+  state$origins <- character()
+  if (!is.na(state$port)) pw_allow_local(state)
   state$items <- pw_items(path)
   state$git_dirs <- pw_git_dirs(path)
   state$fingerprint <- pw_fingerprint(state)
   state
-}
-
-# 32 hex digits from the OS where possible; never touches the user's RNG stream.
-pw_token <- function() {
-  bytes <- if (file.exists("/dev/urandom")) {
-    tryCatch({
-      con <- file("/dev/urandom", "rb", raw = TRUE)
-      on.exit(close(con))
-      readBin(con, "raw", 16L)
-    }, error = function(e) raw())
-  } else raw()
-  if (length(bytes) < 16L) {
-    bytes <- withr::with_preserve_seed({
-      set.seed(NULL)
-      as.raw(sample.int(256L, 16L, replace = TRUE) - 1L)
-    })
-  }
-  paste(format(as.hexmode(as.integer(bytes)), width = 2), collapse = "")
 }
 
 # The mode the page opens in. `auto`: Review when an open item (not passing
@@ -56,9 +43,15 @@ pw_token <- function() {
 resolve_mode <- function(path, mode = c("auto", "review", "build")) {
   mode <- match.arg(mode)
   if (mode != "auto") return(mode)
+  tryCatch(auto_mode(path), error = function(e) {
+    message("Cannot tell whether to review or build (", conditionMessage(e), "); opening in Build mode.")
+    "build"
+  })
+}
+
+auto_mode <- function(path) {
   if (!git_available() || is.na(git_head(path))) return("build")
-  st <- tryCatch(qa_status(path, authors = FALSE), error = function(e) NULL)
-  if (is.null(st)) return("build")
+  st <- qa_status(path, authors = FALSE)
   open <- st[!qa_passing(st), , drop = FALSE]
   if (!nrow(open)) return("build")
   authors <- last_authors(path, open)
@@ -69,7 +62,13 @@ resolve_mode <- function(path, mode = c("auto", "review", "build")) {
   if (any(others)) "review" else "build"
 }
 
-pw_items <- function(path) tryCatch(read_source(path)$items, error = function(e) NULL)
+# Source items, or the error of reading them (a file that does not parse).
+pw_read_items <- function(path) tryCatch(read_source(path)$items, error = function(e) e)
+
+pw_items <- function(path) {
+  items <- pw_read_items(path)
+  if (inherits(items, "error")) NULL else items
+}
 
 # ---- Starting and stopping -------------------------------------------------
 
@@ -78,14 +77,26 @@ pw_start <- function(path, mode) {
   server <- NULL
   for (i in 1:20) {
     state$port <- as.integer(httpuv::randomPort(host = "127.0.0.1"))
+    state$hosts <- state$origins <- character()
+    pw_allow_local(state)
     server <- tryCatch(httpuv::startServer("127.0.0.1", state$port, pw_app(state)), error = function(e) NULL)
     if (!is.null(server)) break
   }
   if (is.null(server)) stop("Cannot start the pipeworks server: no free port found.", call. = FALSE)
   state$server <- server
+  state$public_url <- pw_rstudio_server_url(pw_url(state))
+  if (!is.null(state$public_url)) pw_allow(state, pw_origin_of(state$public_url))
   pw_watch(state)
   state
 }
+
+# All running servers, stopped (also when the package is unloaded).
+pw_stop_all <- function() {
+  for (key in ls(pw_servers, all.names = TRUE)) pipeworks_stop(key)
+  invisible()
+}
+
+.onUnload <- function(libpath) pw_stop_all()
 
 pw_running <- function(state) {
   isTRUE(state$alive) && !is.null(state$server) && isTRUE(tryCatch(state$server$isRunning(), error = function(e) FALSE))
@@ -100,33 +111,35 @@ pw_shutdown <- function(state) {
 
 pw_url <- function(state) sprintf("http://127.0.0.1:%d/?token=%s", state$port, state$token)
 
-# Viewer pane in RStudio, else the browser.
-show_url <- function(url, viewer) {
-  if (isTRUE(viewer) && requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
-    rstudioapi::viewer(url)
-  } else {
-    utils::browseURL(url)
-  }
-}
-
-open_in_editor <- function(file, line) {
-  if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
-    rstudioapi::navigateToFile(file, line = line)
-  } else {
-    utils::file.edit(file)
-  }
-}
+# The address to show the user: the RStudio Server one when there is one.
+pw_public_url <- function(state) state$public_url %||% pw_url(state)
 
 # ---- Watcher ---------------------------------------------------------------
 
 pw_watch <- function(state) {
   later::later(function() {
-    if (!isTRUE(state$alive)) return()
-    tryCatch(pw_tick(state), error = function(e) {
-      state$model_error <- paste("Refreshing failed:", conditionMessage(e))
-    })
+    if (!pw_running(state)) return()
+    pw_watch_step(state)
     pw_watch(state)
   }, 2)
+}
+
+# A tick that cannot throw: an error goes to `live$watch_error` (and bumps
+# the version so the page shows it); the next good tick clears it.
+pw_watch_step <- function(state) {
+  ok <- tryCatch({
+    pw_tick(state)
+    TRUE
+  }, error = function(e) {
+    state$watch_error <- paste("Refreshing failed:", conditionMessage(e))
+    state$version <- state$version + 1L
+    FALSE
+  })
+  if (ok && !is.null(state$watch_error)) {
+    state$watch_error <- NULL
+    state$version <- state$version + 1L
+  }
+  invisible(ok)
 }
 
 # One watcher step: collect a finished background rebuild, then compare the
@@ -183,19 +196,39 @@ pw_fingerprint <- function(state) {
   })
 }
 
-# Review status again, in-session; the structure stays. A failure keeps the
-# last status and reports it in `live$qa_error`.
+# Run `expr`, collecting its warnings instead of letting them reach the
+# console: list(value, warnings).
+pw_quietly <- function(expr) {
+  warnings <- character()
+  value <- withCallingHandlers(expr, warning = function(w) {
+    warnings <<- c(warnings, conditionMessage(w))
+    invokeRestart("muffleWarning")
+  })
+  list(value = value, warnings = warnings)
+}
+
+# Review status again, in-session; the structure stays. When the source does
+# not parse, or the status cannot be read (an error, or a result without
+# `qa_summary` where there was one), the last items and status stay and
+# `live$qa_error` says why; the next good refresh clears it. Warnings alone
+# are no failure.
 pw_refresh_qa <- function(state) {
-  state$items <- pw_items(state$path)
-  model <- tryCatch(attach_qa(state$model, state$path, state$items),
-                    error = function(e) e, warning = function(w) w)
-  if (inherits(model, "condition")) {
-    state$qa_error <- conditionMessage(model)
+  on.exit(state$version <- state$version + 1L, add = TRUE)
+  items <- pw_read_items(state$path)
+  if (inherits(items, "error")) {
+    state$qa_error <- conditionMessage(items)
+    return(invisible(state))
+  }
+  state$items <- items
+  res <- tryCatch(pw_quietly(attach_qa(state$model, state$path, items)), error = function(e) e)
+  if (inherits(res, "error")) {
+    state$qa_error <- conditionMessage(res)
+  } else if (is.null(res$value$qa_summary) && !is.null(state$model$qa_summary)) {
+    state$qa_error <- paste(c(res$warnings, "The review status could not be read.")[1], collapse = "")
   } else {
-    state$model <- model
+    state$model <- res$value
     state$qa_error <- NULL
   }
-  state$version <- state$version + 1L
   invisible(state)
 }
 
@@ -220,24 +253,33 @@ pw_kill_bg <- function(state) {
 }
 
 # Take the result of a finished background rebuild: a new model, or the error
-# while the last good model stays.
+# while the last good model stays. The source must parse for the new model to
+# carry its review layer; if it does not (changed since the job started), the
+# last model stays too.
 pw_poll_bg <- function(state) {
   bg <- state$bg
   if (is.null(bg) || bg$is_alive()) return(FALSE)
   state$bg <- NULL
+  on.exit(state$version <- state$version + 1L, add = TRUE)
   info <- tryCatch(bg$get_result(), error = function(e) e)
-  model <- if (inherits(info, "error")) info else {
-    tryCatch(suppressWarnings(assemble_model(state$path, info)), error = function(e) e)
+  if (inherits(info, "error")) {
+    state$model_error <- pw_error_message(info)
+    return(TRUE)
   }
-  if (inherits(model, "error")) {
-    state$model_error <- pw_error_message(model)
-  } else {
-    state$model <- model
-    state$model_error <- NULL
-    state$qa_error <- NULL
-    state$items <- pw_items(state$path)
+  items <- pw_read_items(state$path)
+  if (inherits(items, "error")) {
+    state$qa_error <- conditionMessage(items)
+    return(TRUE)
   }
-  state$version <- state$version + 1L
+  res <- tryCatch(pw_quietly(assemble_model(state$path, info)), error = function(e) e)
+  if (inherits(res, "error")) {
+    state$model_error <- pw_error_message(res)
+    return(TRUE)
+  }
+  state$model <- res$value
+  state$items <- items
+  state$model_error <- NULL
+  state$qa_error <- NULL
   TRUE
 }
 
@@ -273,7 +315,8 @@ pw_live <- function(state) {
     can_record = rec$ok,
     blockers = I(rec$blockers),
     blocked_reason = rec$reason,
-    qa_error = state$qa_error
+    qa_error = state$qa_error,
+    watch_error = state$watch_error
   )
 }
 

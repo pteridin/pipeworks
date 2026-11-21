@@ -21,7 +21,8 @@ items (not passing \code{\link[=qa_check]{qa_check()}}) last changed by someone 
 current git user, else Build. The page can switch modes at any time.}
 }
 \value{
-The address of the editor, invisibly.
+The address of the editor (on RStudio Server the proxied one),
+invisibly.
 }
 \description{
 Reads the targets project in \code{path}, starts a small web server inside the
@@ -40,6 +41,11 @@ The server listens on \verb{127.0.0.1} only and answers only requests that carry
 its random token. There is one server per project: calling \code{pipeworks()}
 again reuses it (open tabs keep working) and shows the editor again. It
 stops with \code{\link[=pipeworks_stop]{pipeworks_stop()}} or when the R session ends.
+
+On RStudio Server and Posit Workbench the page is reached through the
+server's proxy; that address is allowed automatically. If the page still
+answers "Forbidden host" or "Forbidden origin" (it shows what it received),
+allow the address with \code{options(pipeworks.allowed_origins = "https://your.server")}.
 }
 \examples{
 \dontrun{
