@@ -59,6 +59,7 @@ qa_walk <- function(path = ".", base = NULL, include = c("open", "check_again"),
   base_items <- walk_base_items(path, base, items)
   authors <- last_authors(path, items[match(st$id, items$id), , drop = FALSE])
   people <- read_people(path)
+  reviews <- read_reviews(path)
   me <- person_of(who$email, people)
   names <- c(c = "correct", q = "questionable", w = "wrong")
 
@@ -67,11 +68,10 @@ qa_walk <- function(path = ".", base = NULL, include = c("open", "check_again"),
     row <- st[i, , drop = FALSE]
     cat("\n[", i, "/", nrow(st), "] ", row$id, "  (", row$status, ", last changed by ",
         if (is.na(row$last_author)) "unknown" else row$last_author, ")\n", sep = "")
-    if (!is.na(authors$author_email[i]) && person_of(authors$author_email[i], people) == me) {
+    if (isTRUE(!is.na(authors$author_email[i]) && person_of(authors$author_email[i], people) == me)) {
       cat("You last changed this; your verdict will be flagged as self-review.\n")
     }
-    cat(walk_code(path, row), sep = "\n")
-    cat(walk_diff(path, row, base_items), sep = "\n")
+    cat(walk_show(path, row, items, base_items, reviews), sep = "\n")
 
     answer <- ask_choice(input, "[c]orrect  [q]uestionable  [w]rong  [s]kip  [x] quit: ", c(names(names), "s", "x"))
     if (answer == "x") break
@@ -122,7 +122,11 @@ walk_base_items <- function(path, base, items) {
   texts <- tryCatch(git_tree_texts(path, base, items$file[items$kind == "file"]), error = function(e) NULL)
   src <- if (!is.null(texts)) tryCatch(read_source_text(texts), error = function(e) NULL)
   if (is.null(src)) return(NULL)
-  list(base = base, items = src$items, texts = texts)
+  head <- git_try(path, c("rev-parse", "--verify", "--quiet", "HEAD"))
+  tip <- git_try(path, c("rev-parse", "--verify", "--quiet", paste0(base, "^{commit}")))
+  branch <- git_try(path, c("rev-parse", "--abbrev-ref", "HEAD"))
+  same <- identical(head, tip) || identical(branch, base)
+  list(base = base, items = src$items, texts = texts, same = same)
 }
 
 item_lines <- function(texts, row) {
@@ -131,25 +135,81 @@ item_lines <- function(texts, row) {
   lines[seq.int(row$line1, min(row$line2, length(lines)))]
 }
 
-walk_code <- function(path, row) {
-  file <- file.path(path, row$file)
-  txt <- if (file.exists(file)) readLines(file, warn = FALSE, encoding = "UTF-8") else character()
-  lines <- item_lines(stats::setNames(list(txt), row$file), row)
-  if (is.null(lines)) return(character())
+# Current lines of `file` (empty when it does not exist).
+current_lines <- function(path, file) {
+  full <- file.path(path, file)
+  if (file.exists(full)) readLines(full, warn = FALSE, encoding = "UTF-8") else character()
+}
+
+code_block <- function(row, lines) {
   c(paste0("--- ", row$file, ":", row$line1, "-", row$line2), lines)
 }
 
-# A plain line diff of the item against its version at the base.
-walk_diff <- function(path, row, base) {
-  if (is.null(base)) return("(no diff: no `main` or `master` branch to compare with)")
+# What to show for one item: the code (in full only when there is nothing to
+# diff against) or the changed hunks against the base.
+walk_show <- function(path, row, items, base, reviews) {
+  mine <- function(r) item_lines(stats::setNames(list(current_lines(path, r$file)), r$file), r)
+  if (row$status == "check_again") {
+    out <- c(code_block(row, mine(row)),
+             "This item is unchanged; a function it calls changed since the review:")
+    for (id in changed_callees(row, items, reviews)) {
+      out <- c(out, "", paste0("Changed callee: ", id))
+      cur <- items[items$id == id, , drop = FALSE]
+      out <- c(out, if (nrow(cur)) walk_diff(path, cur, base, mine(cur)) else "(removed)")
+    }
+    return(out)
+  }
+  walk_diff(path, row, base, mine(row))
+}
+
+# Callee ids recorded in the item's latest matching review entry whose hash
+# differs now (or that are gone).
+changed_callees <- function(row, items, reviews) {
+  hit <- which(reviews$item == row$id & !is.na(reviews$hash) & reviews$hash == row$hash)
+  if (!length(hit)) return(character())
+  d <- reviews$depends[[hit[length(hit)]]]
+  now <- stats::setNames(items$hash, items$id)
+  names(d)[vapply(names(d), function(k) !(k %in% names(now)) || now[[k]] != d[[k]], logical(1))]
+}
+
+# Code of `row` (`new` = its current lines) as a diff against the base: full
+# code for new items or without a usable diff, else hunks with 3 lines of context.
+walk_diff <- function(path, row, base, new) {
+  if (is.null(base)) return(c(code_block(row, new), "(no diff: no `main` or `master` branch to compare with)"))
+  if (isTRUE(base$same)) return(c(code_block(row, new), paste0("(no diff: you are on ", base$base, ")")))
   old_row <- base$items[base$items$id == row$id, , drop = FALSE]
-  head <- paste0("--- diff against ", base$base)
-  if (!nrow(old_row)) return(c(head, "(new item: not present at the base)"))
+  if (!nrow(old_row)) return(c(code_block(row, new), "(new item: not present at the base)"))
   old <- item_lines(base$texts, old_row)
-  file <- file.path(path, row$file)
-  new <- item_lines(stats::setNames(list(readLines(file, warn = FALSE, encoding = "UTF-8")), row$file), row)
+  head <- paste0("--- ", row$file, ":", row$line1, "-", row$line2, "  (diff against ", base$base, ")")
   if (identical(old, new)) return(c(head, "(no change)"))
-  c(head, line_diff(old, new))
+  c(head, diff_hunks(line_diff(old, new), row$line1))
+}
+
+# Hunks of a `line_diff()` with `context` lines around each change, separated
+# by "@@ lines a-b @@" (line numbers in the file's current version; `first` is
+# the file line of the item's first line).
+diff_hunks <- function(diff, first, context = 3L) {
+  n <- length(diff)
+  changed <- which(substr(diff, 1, 1) %in% c("-", "+"))
+  if (!n || !length(changed)) return(character())
+  keep <- rep(FALSE, n)
+  for (k in changed) keep[max(1L, k - context):min(n, k + context)] <- TRUE
+  new_line <- first + cumsum(substr(diff, 1, 1) != "-") - 1L
+  out <- character()
+  i <- 1L
+  while (i <= n) {
+    if (!keep[i]) {
+      i <- i + 1L
+      next
+    }
+    j <- i
+    while (j < n && keep[j + 1L]) j <- j + 1L
+    lo <- new_line[i] + (substr(diff[i], 1, 1) == "-")
+    hi <- max(new_line[i:j])
+    out <- c(out, paste0("@@ lines ", lo, "-", max(lo, hi), " @@"), diff[i:j])
+    i <- j + 1L
+  }
+  out
 }
 
 # LCS line diff, lines prefixed "- " (removed), "+ " (added) and "  " (kept).
