@@ -69,10 +69,13 @@ qa_report()                           # writes qa-report.pdf
 write the file and commit it yourself. If the commit fails, the file stays.
 The editor then offers to retry, and `qa_review()` tells you.
 
+Verdict commits are local. Push them (`git push`) so they reach the merge
+request. Verdicts need a branch: on a detached HEAD they are refused.
+
 `qa_review()` and the editor only work on committed code: every file in
 `R/`, `_targets.R` and the report sources must be committed. They also need a
 git name and email (`git config user.name`, `git config user.email`) and
-refuse while a merge, rebase or cherry-pick is running. `qa_report(final =
+refuse while a merge, rebase, cherry-pick or revert is running. `qa_report(final =
 TRUE)` refuses to render while the check fails, while code or review files
 have uncommitted changes, and for a project without items.
 
@@ -89,7 +92,7 @@ qa_walk("path/to/project")
 ```
 
 For each item it shows the status, who changed it last, the code and the
-changes since `main`. Answer `c` (correct), `q` (questionable), `w` (wrong),
+changes since the base branch (`main` by default). Answer `c` (correct), `q` (questionable), `w` (wrong),
 `s` (skip) or `x` (quit). Questionable and wrong ask for a comment. Each
 verdict is committed like with `qa_review()`. Use it for a quick review
 without the editor. It needs an interactive R session.

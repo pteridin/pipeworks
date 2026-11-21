@@ -15,7 +15,9 @@ Changes since the QA MVP.
 * Works on RStudio Server and Posit Workbench through the proxy. Set
   `options(pipeworks.allowed_origins = "https://<your-rstudio-host>")` if a
   403 names a host or origin.
-* `qa_walk()` goes through open items in the console.
+* `qa_walk()` goes through open items in the console (interactive sessions only).
+* Verdicts are refused on a detached HEAD, and the editor keeps a banner with a
+  Retry button for verdict files that are saved but not committed.
 * `pipeworks()` returns the address invisibly (it returned the model before).
 
 ## Changed

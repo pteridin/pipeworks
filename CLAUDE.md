@@ -106,7 +106,7 @@ deliberate (see its `README.md`, "Edge cases"); keep them intact.
   `R/server_access.R` (public URL, RStudio proxy, allowed origins, viewer).
 - The page calls relative `api/...` URLs (works behind the RStudio proxy). The
   token goes in the `X-Pipeworks-Token` header. Route contract: see the
-  roxygen of `pipeworks()` and `R/server_api.R`.
+  header comment of `R/server_api.R`.
 - Test seams: `rstudio_available()`, `is_gui_session()`, `show_url()`, the
   `open_file` state field. Never open a real browser or editor in tests;
   build state by hand and call `pw_app(state)$call(req)`.
