@@ -139,6 +139,31 @@ These refine and, where they conflict, override the sections above.
    `rstudioapi` stays in Suggests and "Open in RStudio" falls back to
    `utils::file.edit()` outside RStudio.
 
+## Additions requested by the user (2026-11-21)
+
+8. **Review and Build modes.** Reviewing and editing are separate.
+   - *Review*: structure read-only. All editing actions (add target, add
+     block, plug/unplug, remove, drag-to-connect, double-click to add, the
+     wiring/code/format/pattern fields of the modal, Apply) are hidden or
+     disabled. Shown: QA overlay, diff against base, verdict buttons, "Open in
+     RStudio". Code changes happen in RStudio and are picked up by the refresh.
+   - *Build*: editing actions available (they still only change the view in
+     this round; writing back comes next round). Verdict buttons hidden.
+   - A mode switch in the top bar. `pipeworks(path, mode = c("auto",
+     "review", "build"))`: `auto` opens Review when the current branch has open
+     items against the base branch, else Build. The static page
+     (`pipeworks_html()`, demo) supports both modes too.
+9. **Collapsible sidebar.** A button in the top bar hides and shows the left
+   bar; the canvas takes the full width and refits. Remembered per browser
+   (localStorage, wrapped in try/catch).
+10. **Theme switch.** A top-bar control cycling System → Light → Dark, setting
+    `data-theme` on the root element (all colours are already tokens with
+    light and dark values). Default System; remembered per browser.
+11. **Carried gap from the QA round (ruling R25):** loader detection also
+    flags `source`/`sys.source` used as values (e.g. `lapply(files, source)`,
+    `purrr::walk(files, source)`), `do.call("source", …)` and
+    `eval(parse(file = …))`, so code loaded that way fails the gate.
+
 ## Left to the builder
 
 API shape and routes, how the page discovers it runs live (e.g. a flag in the
