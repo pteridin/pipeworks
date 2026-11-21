@@ -92,10 +92,35 @@ deliberate (see its `README.md`, "Edge cases"); keep them intact.
 - Pages written by `pipeworks()` lack the artifact viewer's CSS reset: the template
   carries its own `[hidden]` rule (last in the stylesheet, so jsdom honours it too).
   Test standalone pages, not only the published artifact.
-- The editor shows QA status read-only (overlay, progress, diff against
-  base); verdicts are still set with `qa_review()` in R.
-- Edits in the editor stay in memory: writing back to files and the live
-  RStudio connection are the next milestone.
+- The editor shows QA status (overlay, progress, diff against base) and, in
+  Review mode on a live page, records verdicts through the server.
+- Edits of the pipeline in the editor stay in memory: writing roxygen/targets
+  back to files is the next milestone.
+
+## Live server
+
+- `pipeworks()` starts an in-session `httpuv` server (127.0.0.1, random port),
+  one per normalised project path; `pipeworks_stop()` stops it. Files:
+  `R/server.R` (state, lifecycle, `later` watcher, background rebuild),
+  `R/server_api.R` (host/origin/token checks, routes),
+  `R/server_access.R` (public URL, RStudio proxy, allowed origins, viewer).
+- The page calls relative `api/...` URLs (works behind the RStudio proxy). The
+  token goes in the `X-Pipeworks-Token` header. Route contract: see the
+  roxygen of `pipeworks()` and `R/server_api.R`.
+- Test seams: `rstudio_available()`, `is_gui_session()`, `show_url()`, the
+  `open_file` state field. Never open a real browser or editor in tests;
+  build state by hand and call `pw_app(state)$call(req)`.
+
+## Verdicts
+
+- `R/verdict.R`: `record_verdict()` writes the entry, `commit_verdict()`
+  commits it. One commit per verdict, only that entry
+  (`git commit --only -- <entry>`). `qa_review()`, the server and `qa_walk()`
+  all go through it, so the checks are the same everywhere.
+- `R/qa_walk.R`: console walk; the `input` argument replaces `readline()` in
+  tests.
+- Test helper `local_example_repo()` (tests/testthat/helper-example.R) gives
+  each test its own copy of the git example (building it takes ~16 s once).
 
 ## Checks before handing back
 
