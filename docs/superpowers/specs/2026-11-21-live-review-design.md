@@ -150,8 +150,12 @@ These refine and, where they conflict, override the sections above.
    - *Build*: editing actions available (they still only change the view in
      this round; writing back comes next round). Verdict buttons hidden.
    - A mode switch in the top bar. `pipeworks(path, mode = c("auto",
-     "review", "build"))`: `auto` opens Review when the current branch has open
-     items against the base branch, else Build. The static page
+     "review", "build"))`: `auto` decides by role, on any branch: Review when
+     there are open items whose last author is someone other than the current
+     git user (person_of() on emails), else Build (the author working on their
+     own `dev/` branch, or nothing open). The mode switch can always override,
+     e.g. an author previewing what the reviewer will see before opening the
+     merge request. The static page
      (`pipeworks_html()`, demo) supports both modes too.
 9. **Collapsible sidebar.** A button in the top bar hides and shows the left
    bar; the canvas takes the full width and refits. Remembered per browser
