@@ -89,6 +89,9 @@ deliberate (see its `README.md`, "Edge cases"); keep them intact.
   their own namespace; form controls use `.inp`, `.txt`, `.select`. A shared
   class name once collapsed selected boxes to zero width.
 - jsdom smoke tests check logic only; layout bugs need a real browser.
+- Pages written by `pipeworks()` lack the artifact viewer's CSS reset: the template
+  carries its own `[hidden]` rule (last in the stylesheet, so jsdom honours it too).
+  Test standalone pages, not only the published artifact.
 - The editor shows QA status read-only (overlay, progress, diff against
   base); verdicts are still set with `qa_review()` in R.
 - Edits in the editor stay in memory: writing back to files and the live
