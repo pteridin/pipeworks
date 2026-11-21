@@ -25,3 +25,8 @@ test_that("example_project() copies the project without build output", {
   expect_false(dir.exists(file.path(dest, "_targets")))
   expect_error(example_project(dest), "already exists")
 })
+
+test_that("hidden elements stay hidden outside the artifact viewer", {
+  template <- paste(readLines(system.file("app", "index.html", package = "pipeworks")), collapse = "\n")
+  expect_match(template, "[hidden][hidden] { display: none !important; }", fixed = TRUE)
+})

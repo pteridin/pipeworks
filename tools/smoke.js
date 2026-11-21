@@ -175,6 +175,12 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   key('Delete');
   ok(nodes() === before && /Unfold/.test(d.getElementById('toast-msg').textContent), 'a folded card cannot be removed');
 
+  // Hidden overlays must not render outside the artifact viewer (which adds its own [hidden] reset).
+  for (const id of ['nodata', 'overlay']) {
+    const el = d.getElementById(id);
+    ok(el.hidden && w.getComputedStyle(el).display === 'none', `#${id} is not displayed while hidden`);
+  }
+
   await wait(600);
   ok(errors.length === 0, `no console errors${errors.length ? ':\n' + errors.join('\n') : ''}`);
   console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
