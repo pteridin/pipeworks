@@ -5,7 +5,7 @@ test_that("qa_check(), report_data() and read_pipeline() do not read authors fro
   skip_if_not(git_available())
   repo <- reviewed_repo()
   commit_as(repo, "R/b.R", c("#' Double the input", "h <- function(x) g(x) * 3"))  # h is changed
-  ex <- if (requireNamespace("tarchetypes", quietly = TRUE)) example_project(file.path(withr::local_tempdir(), "s"), git = TRUE)
+  ex <- if (requireNamespace("tarchetypes", quietly = TRUE)) local_example_repo()
   local_mocked_bindings(last_authors = function(...) stop("the git history was read"))
   expect_error(suppressMessages(qa_check(repo)), "1 changed")
   expect_false(report_data(repo)$passed)

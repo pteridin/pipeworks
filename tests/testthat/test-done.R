@@ -71,7 +71,7 @@ test_that("report sources are named in the scope", {
 test_that("the editor counts done like qa_check() and lists items without a box", {
   skip_if_no_targets()
   skip_if_not(git_available())
-  repo <- example_project(file.path(withr::local_tempdir(), "s"), git = TRUE)
+  repo <- local_example_repo()
   m <- read_pipeline(repo, status = FALSE)
   s <- m$qa_summary
   st <- qa_status(repo)

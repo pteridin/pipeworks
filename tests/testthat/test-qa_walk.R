@@ -11,8 +11,7 @@ scripted <- function(answers) {
 }
 
 walk_repo <- function(env = parent.frame()) {
-  skip_if_not(git_available())
-  example_project(file.path(withr::local_tempdir(.local_envir = env), "s"), git = TRUE)
+  local_example_repo(env = env)
 }
 
 test_that("a walk records one commit per verdict and leaves the rest open", {

@@ -122,7 +122,7 @@ test_that("outside git the model has no QA overlay", {
 test_that("in a git repository targets and functions carry their QA status", {
   skip_if_no_targets()
   skip_if_not(git_available())
-  repo <- example_project(file.path(withr::local_tempdir(), "s"), git = TRUE)
+  repo <- local_example_repo()
   m <- read_pipeline(repo, status = FALSE)
 
   s <- m$qa_summary

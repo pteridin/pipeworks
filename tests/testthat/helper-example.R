@@ -30,6 +30,28 @@ read_example <- function() {
   example_cache$model
 }
 
+# The git scenario of `example_project(git = TRUE)` costs ~16 s (one commit per
+# verdict), so build it once per test process and hand every test its own copy
+# (including `.git` and the repo-local identity). Copies are independent.
+local_example_repo <- function(env = parent.frame()) {
+  skip_if_not(git_available())
+  src <- example_cache$repo
+  if (is.null(src)) {
+    root <- file.path(tempdir(), "pw-cache")
+    dir.create(root, showWarnings = FALSE, recursive = TRUE)
+    src <- example_project(file.path(root, "survey"), git = TRUE)
+    example_cache$repo <- src
+  }
+  copy_repo(src, env)
+}
+
+copy_repo <- function(src, env) {
+  dest <- withr::local_tempdir(.local_envir = env)
+  ok <- file.copy(list.files(src, all.files = TRUE, no.. = TRUE, full.names = TRUE), dest, recursive = TRUE)
+  stopifnot(all(ok))
+  normalizePath(dest)
+}
+
 # Write named character vectors as files below a temp dir (removed when `env`
 # finishes) and return the dir.
 local_project <- function(files, env = parent.frame()) {
@@ -63,7 +85,14 @@ git_init_main <- function(repo) {
 # A temp git repo (plain git, repo-local identity, no signing) with `files`
 # committed as "initial". Returns its path.
 local_git_repo <- function(files, author = c("Ann", "ann@wig2.de"), env = parent.frame()) {
-  repo <- local_project(files, env = env)
+  init_git_repo(withr::local_tempdir(.local_envir = env), files, author)
+}
+
+init_git_repo <- function(repo, files, author) {
+  for (f in names(files)) {
+    dir.create(dirname(file.path(repo, f)), recursive = TRUE, showWarnings = FALSE)
+    writeLines(files[[f]], file.path(repo, f))
+  }
   git_init_main(repo)
   set_git_user(repo, author[1], author[2])
   git_cmd(repo, "config", "commit.gpgsign", "false")
@@ -94,7 +123,15 @@ commit_as <- function(repo, file, lines, author = c("Ann", "ann@wig2.de"), messa
 # (`questionable`, with a comment); the review entries are committed. Returns
 # the path; the repo-local git identity is Ann again afterwards.
 reviewed_repo <- function(env = parent.frame()) {
-  repo <- local_git_repo(list(
+  if (is.null(example_cache$reviewed)) {
+    example_cache$reviewed <- build_reviewed_repo(file.path(tempdir(), "pw-cache", "reviewed"))
+  }
+  copy_repo(example_cache$reviewed, env)
+}
+
+build_reviewed_repo <- function(repo) {
+  dir.create(repo, recursive = TRUE)
+  init_git_repo(repo, list(
     "R/a.R" = c(
       "#' Constant one", "#'", "#' @return One.", "f <- function() 1",
       "",
@@ -102,7 +139,7 @@ reviewed_repo <- function(env = parent.frame()) {
     ),
     "R/b.R" = c("#' Double the input", "h <- function(x) g(x) * 2"),
     "_targets.R" = c("library(targets)", "list(", "  tar_target(t1, g(1)),", "  tar_target(t2, h(t1))", ")")
-  ), author = c("Ann", "ann@wig2.de"), env = env)
+  ), author = c("Ann", "ann@wig2.de"))
   set_git_user(repo, "Bob", "bob@wig2.de")
   st <- qa_status(repo)
   suppressMessages(for (id in st$id) {
