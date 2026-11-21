@@ -1798,6 +1798,7 @@ let retrying = false;
 async function retryCommit(item) {
   if (!IS_LIVE || retrying) return;
   retrying = true;
+  renderBanners();
   const st = item ? vst(item) : { result: null };
   st.result = { text: 'Committing again…' }; if (item) showVerdictState(item);
   let version = null;
@@ -1809,6 +1810,7 @@ async function retryCommit(item) {
       : { cls: 'err', text: `still not committed: ${failed.map(x => `${x.file}: ${x.error || '?'}`).join('; ') || 'git refused the commit'}`, retry: true, toast: true };
   } catch (e) { st.result = { cls: 'err', text: connText(e), retry: true, toast: true }; }
   retrying = false;
+  renderBanners();
   if (item) showVerdictState(item); else toast(st.result.text);
   if (version != null) await syncTo(version);
 }
@@ -1828,12 +1830,14 @@ function renderBanners() {
   if (MODEL_ERROR) out.push(['', `The pipeline could not be read again; this shows the last good version. ${MODEL_ERROR}`]);
   if (LIVE && LIVE.qa_error) out.push(['', `Review status not refreshed: ${LIVE.qa_error}`]);
   if (LIVE && LIVE.watch_error) out.push(['', `Watching the project for changes failed: ${LIVE.watch_error}`]);
+  const unc = LIVE ? arr(LIVE.uncommitted) : [];
   const el = $('#banners');
   el.innerHTML = out.map(([cls, text]) => `<div class="banner${cls ? ' ' + cls : ''}">${esc(text)}</div>`).join('')
+    + (unc.length && IS_LIVE ? `<div class="banner err" id="b-uncommitted" title="${esc(unc.join('\n'))}">${unc.length} verdict${unc.length === 1 ? '' : 's'} saved but not committed<button data-retry-all="1"${retrying ? ' disabled' : ''}>Retry</button></div>` : '')
     + (PENDING ? `<div class="banner info">The project changed in R. This view has changes of its own (Build) that are not in your files, so it still shows the old version.<button data-reload="1">Show the new version (drops the changes)</button></div>` : '');
-  el.hidden = !out.length && !PENDING;
+  el.hidden = !out.length && !PENDING && !(unc.length && IS_LIVE);
 }
-$('#banners').addEventListener('click', e => { if (e.target.closest('[data-reload]') && PENDING) { applyModel(PENDING); renderBanners(); toast('Showing the version from R.'); } });
+$('#banners').addEventListener('click', e => { if (e.target.closest('[data-retry-all]')) { retryCommit(null); return; } if (e.target.closest('[data-reload]') && PENDING) { applyModel(PENDING); renderBanners(); toast('Showing the version from R.'); } });
 const hhmm = d => d && !isNaN(d) ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
 function renderSession() {
   const el = $('#session');

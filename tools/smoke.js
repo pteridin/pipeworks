@@ -223,7 +223,7 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   // ---------- Live page: the same model served by pipeworks(), with a fake R server behind fetch ----------
   console.log('\n# live page');
   const TOKEN = 'tok123';
-  const live0 = { version: 1, mode: 'review', base: 'main', can_record: true, blockers: [], blocked_reason: null, qa_error: null, watch_error: null };
+  const live0 = { version: 1, mode: 'review', base: 'main', can_record: true, blockers: [], blocked_reason: null, qa_error: null, watch_error: null, uncommitted: ['qa/reviews/a.json', 'qa/reviews/b.json'] };
   const server = {
     model: { ...JSON.parse(JSON.stringify(model)), live: live0, model_error: null },
     calls: [], badToken: 0, absolute: 0, down: false, refuse: null,
@@ -262,6 +262,7 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
     }
     if (url === 'api/retry' && method === 'POST') {
       await wait(30);
+      server.model.live.uncommitted = [];
       server.bump();
       return reply(200, { ok: true, results: [{ file: 'qa/reviews/x.json', committed: true, error: null }], version: server.model.live.version });
     }
@@ -287,6 +288,18 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   const nudge = async () => { d.dispatchEvent(new w.Event('visibilitychange')); await wait(120); };
   const banners = () => d.getElementById('banners').textContent;
   const XSS = '<img src=x onerror="window.__xss=1">';
+
+  // verdicts left uncommitted show a banner from the first load, with a Retry that goes through api/retry
+  const ub = () => d.getElementById('b-uncommitted');
+  ok(ub() && /2 verdicts saved but not committed/.test(ub().textContent), `uncommitted banner on a fresh load: "${ub()?.textContent}"`);
+  const nRetry = calls('api/retry').length;
+  ub().querySelector('button').click();
+  ub()?.querySelector('button')?.click();
+  await wait(150);
+  ok(calls('api/retry').length === nRetry + 1, 'Retry in the banner posts api/retry once (busy-guarded)');
+  await nudge();
+  ok(!ub(), 'banner gone once nothing is uncommitted');
+
   ok(liveReview(), 'live page starts in the mode of live.mode (review)');
   ok(!shown(d.getElementById('btn-add')) && !$$('#nodes .port').length, 'Review: no add button, no ports');
   const n0 = nodes();
@@ -344,7 +357,7 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   ok(retryBtn, 'Retry commit button offered');
   if (retryBtn) { retryBtn.click(); panelOf('target:clean_data')?.querySelector('[data-vretry]')?.click(); }
   await wait(150);
-  ok(calls('api/retry').length === 1, `Retry: exactly one POST api/retry (${calls('api/retry').length})`);
+  ok(calls('api/retry').length === nRetry + 2, `Retry: exactly one more POST api/retry (${calls('api/retry').length})`);
   ok(/committed 1 entry/.test(resultOf('target:clean_data')), `retry result: "${resultOf('target:clean_data')}"`);
 
   // Build mode: the reverse

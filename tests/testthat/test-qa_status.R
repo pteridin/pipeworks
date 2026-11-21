@@ -55,3 +55,9 @@ test_that("changed_vs_base and orphans", {
   commit_as(repo, "R/a.R", "f <- function() 2")
   expect_equal(qa_status(repo, orphans = TRUE)$item, "function:g")
 })
+
+test_that("status mentions verdict files that are not committed", {
+  repo <- local_example_repo()
+  record_verdict(repo, "function:count_by_channel", "correct", commit = FALSE)
+  expect_output(print(qa_status(repo)), "1 verdict file\\(s\\) are not committed yet: run git commit or retry from the editor")
+})

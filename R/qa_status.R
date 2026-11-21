@@ -94,6 +94,7 @@ qa_status <- function(path = ".", base = NULL, orphans = FALSE, authors = TRUE) 
   out$changed_vs_base <- changed_vs_base
   rownames(out) <- NULL
   attr(out, "external") <- src$external
+  attr(out, "uncommitted") <- length(uncommitted_reviews(path))
   class(out) <- c("pipeworks_qa_status", "data.frame")
   out
 }
@@ -119,6 +120,8 @@ print.pipeworks_qa_status <- function(x, ...) {
     cat("\nWarning:\n")
     cat(paste0("  ", external_messages(ext)), sep = "\n")
   }
+  n_unc <- attr(x, "uncommitted") %||% 0L
+  if (n_unc > 0) cat("\n", uncommitted_message(n_unc), "\n", sep = "")
   invisible(x)
 }
 
@@ -171,4 +174,8 @@ qa_check <- function(path = ".", allow_questionable = TRUE) {
   }
   message("\u2714 QA check passed: ", nrow(st), " items reviewed")
   invisible(st)
+}
+
+uncommitted_message <- function(n) {
+  paste0(n, " verdict file(s) are not committed yet: run git commit or retry from the editor.")
 }
