@@ -12,11 +12,12 @@ yet written back to your files.
 
 ## Installation
 
-pipeworks is not on CRAN. Install it from your GitLab:
+pipeworks is not on CRAN. Install it from GitHub. The repository is private,
+so you need a GitHub personal access token with read access to it, stored as
+`GITHUB_PAT` (e.g. with `usethis::edit_r_environ()` or `gitcreds::gitcreds_set()`):
 
 ```r
-# <your GitLab URL> is a placeholder
-remotes::install_git("<your GitLab URL>/pipeworks.git")
+remotes::install_github("pteridin/pipeworks")
 ```
 
 For the PDF report you also need [Quarto](https://quarto.org) and `git`.
@@ -116,7 +117,8 @@ proxy. The address of the proxy is allowed automatically. If the page shows a
 403 that names a host or origin, allow your server:
 
 ```r
-options(pipeworks.allowed_origins = "https://<your-rstudio-host>")
+# replace with the address of your RStudio Server, as named in the 403 message
+options(pipeworks.allowed_origins = "https://rstudio.example.org")
 ```
 
 Then call `pipeworks()` again. Please test this once on your server and tell
@@ -124,11 +126,11 @@ us what you see; it has not been tried on a real server yet.
 
 ## GitLab CI
 
-This job fails the pipeline while reviews are missing. Replace `<host>` and
-`<group>` with your GitLab host and group. `rocker/r-ver` has no `git`, so the
-job installs it. The job token can clone pipeworks only if the pipeworks
-project allows it: in pipeworks, *Settings > CI/CD > Job token permissions*,
-add the projects that use it.
+This job fails the pipeline while reviews are missing. pipeworks is
+installed from its private GitHub repository, so add a masked CI/CD variable
+`GITHUB_PAT` (a GitHub token with read access to `pteridin/pipeworks`) in your
+GitLab project under *Settings > CI/CD > Variables*. `rocker/r-ver` has no
+`git`, so the job installs it.
 
 ```yaml
 qa:
@@ -136,8 +138,8 @@ qa:
   before_script:
     - apt-get update && apt-get install -y git
   script:
-    - Rscript -e 'install.packages(c("remotes", "jsonlite", "roxygen2", "targets", "withr"))'
-    - Rscript -e 'remotes::install_git("https://gitlab-ci-token:${CI_JOB_TOKEN}@<host>/<group>/pipeworks.git")'
+    - Rscript -e 'install.packages("remotes")'
+    - Rscript -e 'remotes::install_github("pteridin/pipeworks")'   # uses GITHUB_PAT
     - Rscript -e 'pipeworks::qa_check()'
 ```
 
@@ -149,12 +151,12 @@ as a job artifact:
 
 ```yaml
 qa-report:
-  image: <an image with R, Quarto and git>
+  image: rocker/verse:4.4   # R with Quarto and git
   variables:
     GIT_DEPTH: 0   # the review history comes from the merge commits
   script:
-    - Rscript -e 'install.packages(c("remotes", "jsonlite", "roxygen2", "targets", "withr"))'
-    - Rscript -e 'remotes::install_git("https://gitlab-ci-token:${CI_JOB_TOKEN}@<host>/<group>/pipeworks.git")'
+    - Rscript -e 'install.packages("remotes")'
+    - Rscript -e 'remotes::install_github("pteridin/pipeworks")'   # uses GITHUB_PAT
     - Rscript -e 'pipeworks::qa_report(output = "qa-report.pdf")'
   artifacts:
     paths:

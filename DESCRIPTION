@@ -11,6 +11,8 @@ Description: Shows a 'targets' pipeline as a wiring diagram. Each file in R/
     CI job on them, and 'qa_report()' renders a PDF. Started from the R
     console, so 'RStudio' stays the main editor.
 License: MIT + file LICENSE
+URL: https://github.com/pteridin/pipeworks
+BugReports: https://github.com/pteridin/pipeworks/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
