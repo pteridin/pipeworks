@@ -137,9 +137,12 @@ test_that("source used as a value, do.call() and eval(parse()) fail the gate", {
     expect_error(suppressMessages(qa_check(proj(c("library(targets)", code, "list()")))),
                  "loaded from .*_targets.R", label = code)
   }
-  expect_error(suppressMessages(qa_check(proj(bad[[1]]))), "lapply\\(list.files")
+  expect_error(suppressMessages(qa_check(proj(bad[[1]]))), "source passed to lapply\\(\\)")
   for (ok in c("x <- function(source) source + 1", "y <- list(source = 1); y$source", "z <- function(a) a$source",
-               "f(source = 1)")) {
+               "f(source = 1)", "if (x) source", "for (i in source) i", "while (source) 1",
+               "df |> dplyr::select(source)", "df |> group_by(source)", "df |> count(source)",
+               "df |> mutate(a = paste(source, 'x'))", "df |> mutate(a = toupper(source))",
+               "df |> summarise(n = n_distinct(source))", "tibble::tibble(source)")) {
     expect_equal(nrow(attr(qa_status(proj(ok)), "external")), 0, label = ok)
   }
 })

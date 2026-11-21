@@ -306,9 +306,16 @@ loader_calls <- function(pd, file, call_of) {
   rbind(out, loader_values(pd, file), loader_indirect(pd, file, call_of))
 }
 
-# `source` / `sys.source` passed as an argument (`lapply(files, source)`): a
-# SYMBOL token, so not a formal (SYMBOL_FORMALS), a named argument (SYMBOL_SUB)
-# or a `$`/`@` member. Reported with the call it is passed to.
+# `source` / `sys.source` handed on as a function (`lapply(files, source)`): a
+# SYMBOL token (not a formal or named argument), not a `$`/`@` member, passed to
+# a function-taking caller (apply family, do.call, purrr, furrr, future.apply)
+# or as the value of an argument named FUN, .f, f or what. A column called
+# `source` in `select(source)` is not a loader.
+LOADER_CALLERS <- paste0(
+  "^(lapply|sapply|vapply|mapply|Map|Reduce|Filter|Position|Find|rapply|outer|do\\.call|",
+  "(map|walk|pmap|imap|lmap|modify)[._[:alnum:]]*|future_(map|walk)[._[:alnum:]]*|future_[[:alnum:]]*apply)$"
+)
+
 loader_values <- function(pd, file) {
   out <- empty_external()
   sym <- pd[pd$token == "SYMBOL" & pd$text %in% c("source", "sys.source"), , drop = FALSE]
@@ -316,13 +323,23 @@ loader_values <- function(pd, file) {
     expr <- pd$parent[pd$id == sym$id[j]]
     if (any(pd$parent == expr & pd$token %in% c("'$'", "'@'"))) next
     holder <- pd$parent[pd$id == expr]
-    # Only a call argument can hand the function on: `source + 1` in a body
-    # that has a formal named `source` is not a loader.
-    if (holder <= 0 || !any(pd$parent == holder & pd$token == "'('")) next
-    fun <- pd[pd$parent == holder & pd$token == "expr", , drop = FALSE]
-    if (fun$id[order(fun$line1, fun$col1)[1]] == expr) next
-    text <- utils::getParseText(pd, holder)
-    out[nrow(out) + 1L, ] <- list(file, sym$line1[j], sym$text[j], squash(text))
+    if (holder <= 0) next
+    kids <- pd[pd$parent == holder, , drop = FALSE]
+    kids <- kids[order(kids$line1, kids$col1), , drop = FALSE]
+    if (nrow(kids) < 3 || kids$token[1] != "expr" || kids$token[2] != "'('" || kids$id[1] == expr) next
+    call <- tryCatch(str2lang(utils::getParseText(pd, holder)), error = function(e) NULL)
+    if (!is.call(call)) next
+    head <- call[[1]]
+    if (is.call(head) && as.character(head[[1]])[1] %in% c("::", ":::")) head <- head[[3]]
+    caller <- if (is.name(head) || is.character(head)) as.character(head) else NA_character_
+    args <- as.list(call)[-1]
+    nms <- names(args)
+    if (is.null(nms)) nms <- rep("", length(args))
+    is_sym <- vapply(args, identical, logical(1), as.name(sym$text[j]))
+    as_fun <- any(is_sym & nms %in% c("FUN", ".f", "f", "what"))
+    if (!as_fun && !(any(is_sym) && !is.na(caller) && grepl(LOADER_CALLERS, caller))) next
+    out[nrow(out) + 1L, ] <- list(file, sym$line1[j], sym$text[j],
+                                  paste0(sym$text[j], " passed to ", if (is.na(caller)) "a call" else paste0(caller, "()")))
   }
   out
 }
