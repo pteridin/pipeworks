@@ -303,8 +303,52 @@ loader_calls <- function(pd, file, call_of) {
       else paste(deparse(arg, width.cutoff = 500L), collapse = " ")
     out[nrow(out) + 1L, ] <- list(file, sym$line1[j], fn, path)
   }
+  rbind(out, loader_values(pd, file), loader_indirect(pd, file, call_of))
+}
+
+# `source` / `sys.source` passed as an argument (`lapply(files, source)`): a
+# SYMBOL token, so not a formal (SYMBOL_FORMALS), a named argument (SYMBOL_SUB)
+# or a `$`/`@` member. Reported with the call it is passed to.
+loader_values <- function(pd, file) {
+  out <- empty_external()
+  sym <- pd[pd$token == "SYMBOL" & pd$text %in% c("source", "sys.source"), , drop = FALSE]
+  for (j in seq_len(nrow(sym))) {
+    expr <- pd$parent[pd$id == sym$id[j]]
+    if (any(pd$parent == expr & pd$token %in% c("'$'", "'@'"))) next
+    holder <- pd$parent[pd$id == expr]
+    # Only a call argument can hand the function on: `source + 1` in a body
+    # that has a formal named `source` is not a loader.
+    if (holder <= 0 || !any(pd$parent == holder & pd$token == "'('")) next
+    fun <- pd[pd$parent == holder & pd$token == "expr", , drop = FALSE]
+    if (fun$id[order(fun$line1, fun$col1)[1]] == expr) next
+    text <- utils::getParseText(pd, holder)
+    out[nrow(out) + 1L, ] <- list(file, sym$line1[j], sym$text[j], squash(text))
+  }
   out
 }
+
+# `do.call("source", ...)` and `eval(parse(...))`: code loaded through a string
+# or a parse() that the token scan of `source()` calls cannot see.
+loader_indirect <- function(pd, file, call_of) {
+  out <- empty_external()
+  sym <- pd[pd$token == "SYMBOL_FUNCTION_CALL" & pd$text %in% c("do.call", "eval"), , drop = FALSE]
+  for (j in seq_len(nrow(sym))) {
+    call <- tryCatch(str2lang(utils::getParseText(pd, call_of(sym$id[j]))), error = function(e) NULL)
+    if (is.null(call)) next
+    fn <- sym$text[j]
+    arg <- match_call_args(call, if (fn == "do.call") "what" else "expr")[[1]]
+    hit <- if (fn == "do.call") {
+      if (is.character(arg) && length(arg) == 1 && arg %in% c("source", "sys.source")) arg else NULL
+    } else if (is.call(arg) && identical(arg[[1]], as.name("parse"))) {
+      "eval"
+    }
+    if (is.null(hit)) next
+    out[nrow(out) + 1L, ] <- list(file, sym$line1[j], hit, squash(paste(deparse(call, width.cutoff = 500L), collapse = " ")))
+  }
+  out
+}
+
+squash <- function(x) gsub("[[:space:]]+", " ", x)
 
 parse_descendants <- function(kids, id) {
   out <- id

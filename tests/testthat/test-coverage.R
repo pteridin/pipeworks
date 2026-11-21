@@ -122,3 +122,24 @@ test_that("code loaded from outside R/ and _targets.R fails the gate", {
     expect_equal(nrow(attr(qa_status(proj(ok)), "external")), 0, label = ok)
   }
 })
+
+test_that("source used as a value, do.call() and eval(parse()) fail the gate", {
+  base <- list("R/a.R" = "f <- function(x) x", "scripts/h.R" = "helper2 <- function(x) x")
+  proj <- function(targets) local_project(c(base, list("_targets.R" = targets)), env = parent.frame())
+  bad <- c(
+    "lapply(list.files('scripts', full.names = TRUE), source)",
+    "purrr::walk(list.files('scripts', full.names = TRUE), source)",
+    "do.call('source', list('scripts/h.R'))",
+    "eval(parse(file = 'scripts/h.R'))",
+    "invisible(sapply(c('scripts/h.R'), sys.source, envir = globalenv()))"
+  )
+  for (code in bad) {
+    expect_error(suppressMessages(qa_check(proj(c("library(targets)", code, "list()")))),
+                 "loaded from .*_targets.R", label = code)
+  }
+  expect_error(suppressMessages(qa_check(proj(bad[[1]]))), "lapply\\(list.files")
+  for (ok in c("x <- function(source) source + 1", "y <- list(source = 1); y$source", "z <- function(a) a$source",
+               "f(source = 1)")) {
+    expect_equal(nrow(attr(qa_status(proj(ok)), "external")), 0, label = ok)
+  }
+})
