@@ -223,7 +223,7 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   // ---------- Live page: the same model served by pipeworks(), with a fake R server behind fetch ----------
   console.log('\n# live page');
   const TOKEN = 'tok123';
-  const live0 = { version: 1, mode: 'review', base: 'main', can_record: true, blockers: [], blocked_reason: null, qa_error: null, watch_error: null, user: 'S. Senior' };
+  const live0 = { version: 1, mode: 'review', base: 'main', can_record: true, blockers: [], blocked_reason: null, qa_error: null, watch_error: null };
   const server = {
     model: { ...JSON.parse(JSON.stringify(model)), live: live0, model_error: null },
     calls: [], badToken: 0, absolute: 0, down: false, refuse: null,
@@ -255,8 +255,15 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
     if (url === 'api/model') return reply(200, server.model);
     if (url === 'api/open' && method === 'POST') return reply(200, server.open);
     if (url === 'api/verdict' && method === 'POST') {
+      if (server.next409) { const msg = server.next409; server.next409 = null; return reply(409, { error: msg }); }
       server.setStatus(body.item, body.verdict); server.bump();
+      if (server.commitFails) { const msg = server.commitFails; server.commitFails = null; return reply(200, { ok: true, committed: false, commit: null, error: msg, entry: {}, file: 'qa/reviews/x.json', version: server.model.live.version }); }
       return reply(200, { ok: true, committed: true, commit: 'abc1234def5678', error: null, entry: {}, file: 'qa/reviews/x.json', version: server.model.live.version });
+    }
+    if (url === 'api/retry' && method === 'POST') {
+      await wait(30);
+      server.bump();
+      return reply(200, { ok: true, results: [{ file: 'qa/reviews/x.json', committed: true, error: null }], version: server.model.live.version });
     }
     return reply(404, { error: 'Not found.' });
   };
@@ -276,14 +283,31 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
 
   // Review mode (live.mode): structure read-only, verdict buttons shown
   const liveReview = () => d.getElementById('mode-review')?.getAttribute('aria-pressed') === 'true';
+  // poll now: the page polls at once when the tab becomes visible again
+  const nudge = async () => { d.dispatchEvent(new w.Event('visibilitychange')); await wait(120); };
+  const banners = () => d.getElementById('banners').textContent;
+  const XSS = '<img src=x onerror="window.__xss=1">';
   ok(liveReview(), 'live page starts in the mode of live.mode (review)');
   ok(!shown(d.getElementById('btn-add')) && !$$('#nodes .port').length, 'Review: no add button, no ports');
-  click(d.querySelector('#nodes .node[data-id="clean_data"]'));
+  const n0 = nodes();
+  key('n'); key('z', { ctrlKey: true });
+  await wait(30);
+  ok(nodes() === n0 && d.getElementById('overlay').hidden, 'Review: N and Ctrl+Z do nothing');
+  const cardEdge = $$('#edges .edge-hit').find(e => e.dataset.edge.split('>').every(x => x.includes('::')));
+  click(cardEdge);
+  key('Delete');
+  ok(cardEdge && /Switch to Build mode/.test(d.getElementById('toast-msg').textContent), `Review: Delete on an edge between folded cards says Build only: "${d.getElementById('toast-msg').textContent}"`);
+  key('Escape');
+  const cleanNode = () => d.querySelector('#nodes .node[data-id="clean_data"]');
+  ok(cleanNode().classList.contains('qa-todo'), 'clean_data needs review before the verdict');
+  click(cleanNode());
   ok(!shown(d.querySelector('#nodebar [data-act="remove"]')), 'Review: no Remove on the node toolbar');
   ok($$('#nodebar [data-verdict]').filter(shown).length === 3, 'Review: Correct / Questionable / Wrong on the node toolbar');
   const openModalOf = async id => { d.querySelector(`#nodes .node[data-id="${id}"]`).dispatchEvent(new w.MouseEvent('dblclick', { bubbles: true })); await wait(30); };
   await openModalOf('clean_data');
-  const panel = () => d.querySelector('#m-qa [data-vitem="function:clean_survey"]');
+  const panelOf = item => d.querySelector(`#m-qa [data-vitem="${item}"]`);
+  const panel = () => panelOf('function:clean_survey');
+  const resultOf = item => panelOf(item)?.querySelector('.v-result')?.textContent || '';
   ok(panel() && panel().querySelectorAll('[data-verdict]').length === 3, 'modal: verdict buttons for function:clean_survey');
   ok(!d.querySelector('#m-qa [data-copy]'), 'live modal: buttons instead of the qa_review() call');
   ok(!shown(d.querySelector('#modal [data-m="save"]')) && !d.querySelector('#modal [data-m="remove"]'), 'Review: no Apply, no Remove in the modal');
@@ -293,15 +317,35 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   panel().querySelector('[data-verdict="questionable"]').click();
   await wait(50);
   ok(calls('api/verdict').length === 0, 'questionable without a comment is not sent');
-  ok(/comment/i.test(panel().querySelector('.v-result')?.textContent || ''), `asks for a comment: "${panel().querySelector('.v-result')?.textContent}"`);
+  ok(/comment/i.test(resultOf('function:clean_survey')), `asks for a comment: "${resultOf('function:clean_survey')}"`);
 
-  // a correct verdict is recorded and committed
+  // a correct verdict, pressed twice, is recorded and committed once
+  panel().querySelector('[data-verdict="correct"]').click();
   panel().querySelector('[data-verdict="correct"]').click();
   await wait(150);
   const posted = calls('api/verdict');
-  ok(posted.length === 1 && posted[0].body.item === 'function:clean_survey' && posted[0].body.verdict === 'correct', `POST api/verdict ${JSON.stringify(posted[0] && posted[0].body)}`);
-  ok(/committed abc1234\b/.test(panel()?.textContent || ''), `result shown: "${panel()?.querySelector('.v-result')?.textContent}"`);
+  ok(posted.length === 1 && posted[0].body.item === 'function:clean_survey' && posted[0].body.verdict === 'correct', `double-click Correct: exactly one POST api/verdict ${JSON.stringify(posted.map(p => p.body))}`);
+  ok(/committed abc1234\b/.test(panel()?.textContent || ''), `result shown: "${resultOf('function:clean_survey')}"`);
   ok(calls('api/model', 'GET').length >= 1, 'the new version is fetched after the verdict');
+  ok(!cleanNode().classList.contains('qa-todo') && cleanNode().classList.contains('qa-again'), `after the verdict the node's review class changes: ${cleanNode().className}`);
+
+  // R refuses the verdict (409): its message is shown as an error
+  server.next409 = 'Cannot record a verdict: the author of target:clean_data is unknown.';
+  panelOf('target:clean_data').querySelector('[data-verdict="correct"]').click();
+  await wait(100);
+  ok(/author of target:clean_data is unknown/.test(resultOf('target:clean_data')) && panelOf('target:clean_data').querySelector('.v-result.err'), `409 shown as an error: "${resultOf('target:clean_data')}"`);
+
+  // saved but not committed: Retry commits (one POST however often it is pressed)
+  server.commitFails = 'pre-commit hook failed';
+  panelOf('target:clean_data').querySelector('[data-verdict="correct"]').click();
+  await wait(120);
+  ok(/saved, not committed: pre-commit hook failed/.test(resultOf('target:clean_data')), `not committed: "${resultOf('target:clean_data')}"`);
+  const retryBtn = panelOf('target:clean_data')?.querySelector('[data-vretry]');
+  ok(retryBtn, 'Retry commit button offered');
+  if (retryBtn) { retryBtn.click(); panelOf('target:clean_data')?.querySelector('[data-vretry]')?.click(); }
+  await wait(150);
+  ok(calls('api/retry').length === 1, `Retry: exactly one POST api/retry (${calls('api/retry').length})`);
+  ok(/committed 1 entry/.test(resultOf('target:clean_data')), `retry result: "${resultOf('target:clean_data')}"`);
 
   // Build mode: the reverse
   click(d.getElementById('mode-build'));
@@ -312,52 +356,111 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   await wait(30);
   ok(liveReview() && panel(), 'back to Review: verdict panel again');
 
-  // can_record false + model_error, picked up by polling; selection, fold state and modal survive
-  click(d.querySelector('#nodes .node[data-id="clean_data"]'));
+  // a comment being typed with markup in it
+  const cmt = panel().querySelector('[data-vcmt]');
+  cmt.value = XSS; cmt.dispatchEvent(new w.Event('input', { bubbles: true }));
+
+  // can_record false + model_error, picked up by polling; selection, fold state, viewport and modal survive
+  click(d.querySelector('#nodes .mpill[data-map="map:model_fit"]'));
+  await wait(30);
+  click(cleanNode());
   const k0 = d.getElementById('z-val').value;
-  Object.assign(server.model.live, { can_record: false, blockers: ['R/import.R', 'R/clean.R'], blocked_reason: 'Commit your changes first.' });
-  server.model.model_error = 'Error in tar_target(): object x not found';
+  Object.assign(server.model.live, { can_record: false, blockers: ['R/import.R', XSS], blocked_reason: 'Commit your changes first.' });
+  server.model.model_error = `Error in tar_target(): object x not found ${XSS}`;
   server.model.project = 'survey-refreshed';
+  server.model.functions.find(f => f.name === 'clean_survey').qa.history = [{ verdict: 'wrong', reviewer: 'S. Senior', date: '2026-11-20', comment: XSS, current: false }];
   server.bump();
   const nModel = calls('api/model', 'GET').length;
   await wait(2300);
-  ok(calls('api/model', 'GET').length === nModel + 1, 'version bump fetches the model once');
+  ok(calls('api/model', 'GET').length === nModel + 1, 'version bump fetches the model once (by polling)');
   ok(/survey-refreshed/.test(d.getElementById('session').textContent), 'the page shows the new model');
   ok(d.querySelector('#nodes .node.sel[data-id="clean_data"]'), 'selection kept after the refresh');
+  ok(d.querySelector('#nodes .node[data-id="model_fit_full"]'), 'fold state kept after the refresh (model_fit still unfolded)');
   ok(d.getElementById('z-val').value === k0, 'viewport kept after the refresh');
   const btns = panel() ? [...panel().querySelectorAll('[data-verdict]')] : [];
   ok(btns.length === 3 && btns.every(b => b.disabled), 'can_record false: verdict buttons disabled');
   ok(/Commit your changes first/.test(panel()?.textContent || '') && /R\/import\.R/.test(panel()?.textContent || ''), 'can_record false: reason and blockers listed');
-  ok(/object x not found/.test(d.getElementById('banners').textContent), 'model_error shown in a banner');
+  ok(/object x not found/.test(banners()), 'model_error shown in a banner');
+  ok(!d.querySelector('#banners img, #modal img') && !w.__xss, 'markup in model_error, a blocker, a comment and the draft stays text (no img element)');
+  ok(panel()?.querySelector('[data-vcmt]')?.value === XSS && /onerror/.test(panel()?.querySelector('.v-block')?.textContent || '') && $$('#m-qa .qa-hist').some(h => /onerror/.test(h.textContent)), 'the markup is shown as text (draft, blocker, history)');
   key('Escape');
   await wait(20);
-  // self-review warning: the reviewer is the last author of the item
-  ok(!d.querySelector('.v-warn'), 'no self-review warning for someone else\'s change');
-  server.model.live.user = 'A. Analyst'; server.bump();
-  await wait(2300);
-  await openModalOf('region_summary');
-  const rsPanel = d.querySelector('#m-qa [data-vitem="function:summarise_region"]');
-  ok(rsPanel && /self-review/.test(rsPanel.querySelector('.v-warn')?.textContent || ''), 'self-review warning when the reviewer last changed the item');
+
+  // self-review: only from the server's flag; the toolbar ✓ then opens the dialog instead of recording
+  ok(!d.querySelector('.v-warn'), 'no self-review warning without the flag');
+  Object.assign(server.model.live, { can_record: true, blockers: [], blocked_reason: null });
+  server.model.model_error = null;
+  server.model.functions.find(f => f.name === 'summarise_region').qa.self_review_if_you_record = true;
+  server.bump();
+  await nudge();
+  ok(!/object x not found/.test(banners()), 'model_error banner gone once R reads the pipeline again');
+  click(d.querySelector('#nodes .node[data-id="region_summary"]'));
+  const nPost = calls('api/verdict').length;
+  d.querySelector('#nodebar [data-verdict="correct"]').click();
+  await wait(80);
+  ok(calls('api/verdict').length === nPost && !d.getElementById('overlay').hidden, 'toolbar ✓ on a self-review opens the dialog, records nothing');
+  const rsPanel = panelOf('function:summarise_region');
+  ok(rsPanel && /self-review/.test(rsPanel.querySelector('.v-warn')?.textContent || ''), 'self-review warning from self_review_if_you_record');
   key('Escape');
   await wait(20);
 
   // Open in RStudio goes through the server; its error is shown
-  click(d.querySelector('#nodes .node[data-id="clean_data"]'));
+  click(cleanNode());
   d.querySelector('#nodebar [data-act="rstudio"]').click();
   await wait(60);
   const op = calls('api/open');
   ok(op.length === 1 && op[0].body.item === 'function:clean_survey', `POST api/open ${JSON.stringify(op[0] && op[0].body)}`);
   ok(/open R\/clean\.R:3 yourself/.test(d.getElementById('toast-msg').textContent), 'open error shown as a toast');
 
+  // Build: a refresh is held back while the view has its own changes
+  key('Escape');
+  click(d.getElementById('mode-build'));
+  await wait(20);
+  const histRaw = () => d.querySelector('#nodes .node[data-id="hist_raw"]');
+  click(histRaw()); key('Delete');
+  await wait(20);
+  ok(!histRaw(), 'Build: a target removed in the view');
+  server.model.project = 'survey-v3'; server.bump();
+  await nudge();
+  ok(d.querySelector('#banners [data-reload]') && /changes of its own/.test(banners()) && !/survey-v3/.test(d.getElementById('session').textContent), 'Build with view changes: the new model is held back, banner offers to show it');
+  d.querySelector('#banners [data-reload]').click();
+  await wait(30);
+  ok(histRaw() && /survey-v3/.test(d.getElementById('session').textContent) && !d.querySelector('#banners [data-reload]'), 'reload shows the new model and drops the view changes');
+  // Build without view changes, dialog open: the refresh is applied
+  server.model.project = 'survey-v3b'; server.bump();
+  await openModalOf('hist_raw');
+  await nudge();
+  ok(/survey-v3b/.test(d.getElementById('session').textContent) && !d.getElementById('overlay').hidden, 'Build, open dialog without changes: refresh applied, dialog stays');
+  key('Escape');
+  await wait(20);
+
+  // Build -> Review with view changes: in-page confirmation
+  click(histRaw()); key('Delete');
+  await wait(20);
+  server.model.project = 'survey-v4'; server.bump();
+  await nudge();
+  click(d.getElementById('mode-review'));
+  await wait(20);
+  const conf = d.getElementById('confirm');
+  ok(conf && !conf.hidden && /Discard 1 view change and switch to Review\?/.test(conf.textContent) && !liveReview(), `Build -> Review with changes asks first: "${conf && conf.querySelector('p')?.textContent}"`);
+  click(d.getElementById('confirm-no'));
+  ok(conf && conf.hidden && !liveReview() && !histRaw(), '"Stay in Build" keeps the changes');
+  click(d.getElementById('mode-review'));
+  click(d.getElementById('confirm-yes'));
+  await wait(80);
+  ok(liveReview() && histRaw() && /survey-v4/.test(d.getElementById('session').textContent), 'discard: Review mode with the latest model');
+
   // R refuses (text/plain 403), then R is gone
   server.refuse = 'Host 127.0.0.1:9999 is not allowed.';
-  await wait(2300);
-  ok(/Connection refused by R: Host 127\.0\.0\.1:9999 is not allowed\./.test(d.getElementById('banners').textContent), `refused banner: "${d.getElementById('banners').textContent.trim()}"`);
+  await nudge();
+  ok(/Connection refused by R: Host 127\.0\.0\.1:9999 is not allowed\./.test(banners()), `refused banner: "${banners().trim()}"`);
   server.refuse = null; server.down = true;
-  await wait(2300);
-  ok(/Connection to R lost: run pipeworks\(\) again/.test(d.getElementById('banners').textContent), 'unreachable server shows the banner');
+  await nudge();
+  ok(/Connection to R lost: run pipeworks\(\) again/.test(banners()), 'unreachable server shows the banner');
   server.down = false;
-  ok(d.querySelector('#nodes .node[data-id="clean_data"]'), 'last good view kept while R is gone');
+  ok(cleanNode(), 'last good view kept while R is gone');
+  await nudge();
+  ok(!/Connection/.test(banners()), 'banner gone when R answers again');
 
   await wait(100);
   ok(liveErrors.length === 0, `live page: no console errors${liveErrors.length ? ':\n' + liveErrors.join('\n') : ''}`);

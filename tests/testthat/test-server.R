@@ -75,7 +75,7 @@ test_that("the page embeds the model with the live block", {
   expect_equal(m$live$version, state$version)
   expect_true(m$live$can_record)
   expect_equal(m$live$base, "main")
-  expect_equal(m$live$user, git_user(repo)$name)
+  expect_null(m$live$user)
   expect_null(m$model_error)
   expect_true(length(m$targets) > 0)
 })
@@ -388,4 +388,35 @@ test_that("allowed origins from the option are normalised", {
   expect_warning(res <- do.call(call_app, c(list(state), req)), "needs scheme://host\\[:port\\]")
   expect_equal(res$status, 403L)
   expect_no_warning(do.call(call_app, c(list(state), req)))
+})
+
+test_that("records say whether a verdict now would be a self-review", {
+  repo <- local_example_repo()
+  flag <- function(m, fn) {
+    f <- Filter(function(x) identical(x$name, fn), m$functions)[[1]]
+    f$qa$self_review_if_you_record
+  }
+  # the example leaves the senior as git user; the analyst wrote all the code
+  state <- local_state(repo)
+  m <- call_app(state, path = "/api/model")$json
+  expect_false(flag(m, "clean_survey"))
+  expect_true(all(vapply(m$functions, function(f) isFALSE(f$qa$self_review_if_you_record), logical(1))))
+
+  git_run(repo, c("config", "user.email", "analyst@example.org"))
+  state <- local_state(repo)
+  m <- call_app(state, path = "/api/model")$json
+  expect_true(flag(m, "clean_survey"))
+  expect_true(flag(m, "count_by_channel"))
+
+  # another address of the same person, joined in qa/people
+  git_run(repo, c("config", "user.email", "a.analyst@home.example"))
+  expect_false("function:clean_survey" %in% pw_self_items(repo, state$items))
+  dir.create(file.path(repo, "qa"), showWarnings = FALSE)
+  writeLines(c("Name: A. Analyst", "Emails: analyst@example.org, a.analyst@home.example"), file.path(repo, "qa", "people"))
+  expect_true("function:clean_survey" %in% pw_self_items(repo, state$items))
+
+  # uncommitted changes: no author, no warning
+  items <- state$items
+  items$hash[items$id == "function:clean_survey"] <- "not-in-git"
+  expect_false("function:clean_survey" %in% pw_self_items(repo, items))
 })

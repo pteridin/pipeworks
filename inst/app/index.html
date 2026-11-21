@@ -409,6 +409,9 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 .icon-btn svg { width: 16px; height: 16px; }
 .app.sb-off { grid-template-columns: minmax(0, 1fr); }
 .toolbar .seg { align-self: center; }
+.confirm { position: fixed; z-index: 45; top: 64px; left: 50%; transform: translateX(-50%); width: min(420px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg); }
+.confirm p { margin: 0; font-weight: 600; }
+.confirm-btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 /* Last rule on purpose: the artifact viewer adds this reset itself; a page written by pipeworks() needs its own. */
 [hidden][hidden] { display: none !important; } /* doubled: wins over single-class display rules even without !important */
 </style>
@@ -530,6 +533,7 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 </div>
 
 <div class="overlay" id="overlay" hidden><div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="m-name"></div></div>
+<div class="confirm" id="confirm" role="alertdialog" aria-labelledby="confirm-msg" hidden><p id="confirm-msg"></p><div class="confirm-btns"><button class="btn" id="confirm-no">Stay in Build</button><button class="btn primary" id="confirm-yes">Discard and switch</button></div></div>
 <div class="toast" id="toast" role="status"><span id="toast-msg"></span><button id="toast-act" hidden>Undo</button></div>
 <div class="nodata" id="nodata" hidden><div><h1>No pipeline loaded</h1><p class="help">Open this editor from R with <code>pipeworks::pipeworks()</code> in a targets project.</p><p class="help" id="nodata-why"></p></div></div>
 
@@ -604,6 +608,13 @@ let hover = null, drawerTab = '_targets.R', hitLines = null;
 const undoStack = [];
 
 const snap = () => JSON.stringify({ targets: S.targets, fns: S.fns, edges: S.edges });
+/* Structure only (no positions): the view differs from the model when this differs from BASE, taken when a model is loaded. */
+const structSnap = () => JSON.stringify({ t: Object.values(S.targets).map(({ x, y, _h, ...t }) => t), f: S.fns, e: S.edges });
+let BASE = null;
+const noPos = o => { const { x, y, _h, ...r } = o || {}; return JSON.stringify(r); };
+/* Unapplied changes in an open Build dialog count too. */
+const modalDirty = () => !!M && !REVIEW() && (!S.targets[M.id] || noPos(M.t) !== noPos(S.targets[M.id]) || JSON.stringify(M.f) !== JSON.stringify(fnOf(M.id) || null));
+const viewDiffers = () => structSnap() !== BASE || modalDirty();
 function push(s = snap()) { if (undoStack[undoStack.length - 1] !== s) undoStack.push(s); if (undoStack.length > 100) undoStack.shift(); updateDirty(); }
 function updateDirty() { $('#btn-undo').disabled = !undoStack.length; $('#dirty').hidden = !undoStack.length; }
 function undo() {
@@ -614,6 +625,7 @@ function undo() {
   if (S.sel && S.sel.type === 'node' && !vnode(S.sel.id)) S.sel = null;
   if (S.sel && S.sel.type === 'edge' && !vedgeById(S.sel.id)) S.sel = null;
   updateDirty(); renderAll();
+  if (PENDING && !viewDiffers()) applyModel(PENDING);
 }
 
 /* ---------- Graph helpers ---------- */
@@ -889,8 +901,9 @@ function removeTarget(id) {
 /* Canvas actions on view nodes and edges: a folded map card stands for several targets, so single-target actions need it unfolded. */
 const UNFOLD = 'Unfold the map (click its pill) to change a single variant.';
 function plugCheck(fromDid, toDid) { return vnode(fromDid)?.stack || vnode(toDid)?.stack ? UNFOLD : canConnect(fromDid, toDid); }
-function removeNode(did) { if (vnode(did)?.stack) return toast(UNFOLD); removeTarget(did); }
+function removeNode(did) { if (REVIEW()) return toast(BUILD_ONLY); if (vnode(did)?.stack) return toast(UNFOLD); removeTarget(did); }
 function unplugView(eid) {
+  if (REVIEW()) return toast(BUILD_ONLY);
   const e = vedgeById(eid); if (!e) return;
   if (e.real.length !== 1 || vnode(e.from)?.stack || vnode(e.to)?.stack) return toast(UNFOLD);
   unplug(e.real[0].from, e.real[0].to);
@@ -1317,13 +1330,12 @@ function qaSection(id) {
 /* Verdict state per item, kept across re-renders (refresh, mode switch): comment draft, result line, busy flag. */
 const VSTATE = {};
 const vst = item => (VSTATE[item] ||= { draft: '', result: null, busy: false });
-const sameName = (a, b) => !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 /* Review mode only. Live: the buttons (approved review-view sketch). Static: the qa_review() call to copy. */
 function verdictUi(q) {
   if (!REVIEW()) return '';
   if (!IS_LIVE) { const call = `pipeworks::qa_review("${q.item}", "correct")`; return `<div class="qa-call"><code>${esc(call)}</code><button class="btn small" data-copy="${esc(call)}">Copy</button></div>`; }
   const st = vst(q.item), off = !LIVE.can_record || st.busy;
-  const self = sameName(q.last_author, LIVE.user)
+  const self = q.self_review_if_you_record === true
     ? '<div class="v-warn">You last changed this; your verdict will be flagged as self-review and does not pass <code>qa_check()</code>.</div>' : '';
   const blocked = LIVE.can_record ? '' : `<div class="v-block"><b>${esc(LIVE.blocked_reason || 'Commit your changes first.')}</b>${arr(LIVE.blockers).length ? `<ul>${arr(LIVE.blockers).map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}</div>`;
   const r = st.result;
@@ -1593,6 +1605,7 @@ $('#btn-reset').onclick = () => {
   if (!undoStack.length) return toast('Nothing to discard. The view matches your files.');
   push(); const keep = currentPos(); S = fromModel(RAW); VG = null; Object.entries(keep).forEach(([i, p]) => { if (vnode(i)) Object.assign(P(i), p); });
   renderAll(); autoLayout(); toast('Back to what is in your files.', true);
+  if (PENDING) applyPending();
 };
 $('#tabs').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1606,6 +1619,7 @@ $('#tabs').addEventListener('click', e => {
   }
 });
 document.addEventListener('keydown', e => {
+  if (!confirmEl.hidden && e.key === 'Escape') { e.preventDefault(); return hideConfirm(); }
   if (M) {
     if (e.key === 'Escape') { e.preventDefault(); closeModal(false); }
     else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveModal(); }
@@ -1683,7 +1697,7 @@ function schedulePoll() {
   if (document.visibilityState !== 'hidden') pollTimer = setTimeout(poll, POLL_MS);
 }
 async function poll() {
-  pollTimer = null;
+  clearTimeout(pollTimer); pollTimer = null;
   if (polling) return;
   polling = true;
   try { const v = await api('version'); setConn(null); if (v.version !== LIVE.version) await refresh(); }
@@ -1705,18 +1719,22 @@ async function fetchModel() {
   const m = await api('model');
   if (!m || !m.targets || !m.live) throw apiFail('http', 'R sent a model without targets.');
   refreshedAt = new Date();
-  if (m.live.mode !== serverMode) { serverMode = m.live.mode; if (m.live.mode === 'review' || m.live.mode === 'build') mode = m.live.mode; }
-  // unsaved edits in this view (Build) are not thrown away silently: hold the new model back
-  if (undoStack.length || (M && !REVIEW())) { PENDING = m; LIVE = m.live; MODEL_ERROR = m.model_error || null; renderAll(); if (M) rerenderModal(); return; }
+  // follow a mode change made in R, but never into Review over changes of this view
+  if (m.live.mode !== serverMode) {
+    serverMode = m.live.mode;
+    if (m.live.mode === 'build' || (m.live.mode === 'review' && !(mode === 'build' && viewDiffers()))) mode = m.live.mode;
+  }
+  // Review always shows the latest model; Build holds it back only while the view has changes of its own
+  if (!REVIEW() && viewDiffers()) { PENDING = m; LIVE = m.live; MODEL_ERROR = m.model_error || null; renderAll(); return; }
   applyModel(m);
 }
-function applyPending() { if (PENDING && !undoStack.length) applyModel(PENDING); else renderBanners(); }
+function applyPending() { if (PENDING && !viewDiffers()) applyModel(PENDING); else renderBanners(); }
 /* Swap in a new model, keeping selection, folded maps, mode, viewport and node positions. */
 function applyModel(m) {
   const keepPos = currentPos(), keepSel = S.sel, keepView = { ...view };
   setModel(m); PENDING = null;
   undoStack.length = 0;
-  S = fromModel(RAW); VG = null;
+  S = fromModel(RAW); VG = null; BASE = structSnap();
   [...unfolded].forEach(id => { if (!MAPS[id]) unfolded.delete(id); });
   const lay = computeLayout(); let fresh = false;
   vids().forEach(i => { if (keepPos[i]) Object.assign(P(i), keepPos[i]); else { fresh = true; Object.assign(P(i), lay[i]); } });
@@ -1776,8 +1794,10 @@ async function sendVerdict(item, verdict) {
   showVerdictState(item);
   if (version != null) await syncTo(version);
 }
+let retrying = false;
 async function retryCommit(item) {
-  if (!IS_LIVE) return;
+  if (!IS_LIVE || retrying) return;
+  retrying = true;
   const st = item ? vst(item) : { result: null };
   st.result = { text: 'Committing again…' }; if (item) showVerdictState(item);
   let version = null;
@@ -1788,14 +1808,15 @@ async function retryCommit(item) {
     st.result = r.ok ? { cls: 'ok', text: `committed ${arr(r.results).length} entr${arr(r.results).length === 1 ? 'y' : 'ies'} under qa/reviews/`, toast: true }
       : { cls: 'err', text: `still not committed: ${failed.map(x => `${x.file}: ${x.error || '?'}`).join('; ') || 'git refused the commit'}`, retry: true, toast: true };
   } catch (e) { st.result = { cls: 'err', text: connText(e), retry: true, toast: true }; }
+  retrying = false;
   if (item) showVerdictState(item); else toast(st.result.text);
   if (version != null) await syncTo(version);
 }
 /* Node toolbar: Correct records at once; Questionable and Wrong open the dialog for the comment. */
 function quickVerdict(did, verdict) {
   const q = primaryRecord(did); if (!q) return;
-  if (verdict === 'correct') return sendVerdict(q.item, 'correct');
-  vst(q.item).result = { text: `Add a comment, then press ${verdict === 'wrong' ? 'Wrong' : 'Questionable'}.` };
+  if (verdict === 'correct' && !q.self_review_if_you_record) return sendVerdict(q.item, 'correct');
+  vst(q.item).result = { text: verdict === 'correct' ? 'You last changed this: press Correct here if you still want to record it (flagged as self-review).' : `Add a comment, then press ${verdict === 'wrong' ? 'Wrong' : 'Questionable'}.` };
   openModal(repOf(did));
   setTimeout(() => { const el = [...modal.querySelectorAll('[data-vcmt]')].find(x => x.dataset.vcmt === q.item); if (el && !el.disabled) el.focus(); }, 40);
 }
@@ -1809,7 +1830,7 @@ function renderBanners() {
   if (LIVE && LIVE.watch_error) out.push(['', `Watching the project for changes failed: ${LIVE.watch_error}`]);
   const el = $('#banners');
   el.innerHTML = out.map(([cls, text]) => `<div class="banner${cls ? ' ' + cls : ''}">${esc(text)}</div>`).join('')
-    + (PENDING ? `<div class="banner info">The project changed in R. This view still has changes of its own.<button data-reload="1">Show the new version (drops them)</button></div>` : '');
+    + (PENDING ? `<div class="banner info">The project changed in R. This view has changes of its own (Build) that are not in your files, so it still shows the old version.<button data-reload="1">Show the new version (drops the changes)</button></div>` : '');
   el.hidden = !out.length && !PENDING;
 }
 $('#banners').addEventListener('click', e => { if (e.target.closest('[data-reload]') && PENDING) { applyModel(PENDING); renderBanners(); toast('Showing the version from R.'); } });
@@ -1838,12 +1859,29 @@ function renderChrome() {
 }
 function setMode(m) {
   if (m === mode) return;
+  if (m === 'review' && viewDiffers()) return askDiscard();
+  hideConfirm();
   mode = m; hover = null;
   if (drag) drag = null;
   renderAll();
   if (M) rerenderModal();
   toast(m === 'review' ? 'Review mode: the structure is read-only.' : 'Build mode: changes stay in this view.');
 }
+/* In-page confirmation (window.confirm may be blocked in the Viewer or an artifact frame). */
+const confirmEl = $('#confirm');
+function askDiscard() {
+  const n = Math.max(1, undoStack.length);
+  $('#confirm-msg').textContent = `Discard ${n} view change${n === 1 ? '' : 's'} and switch to Review?`;
+  confirmEl.hidden = false; $('#confirm-no').focus();
+}
+function hideConfirm() { confirmEl.hidden = true; }
+$('#confirm-no').onclick = () => { hideConfirm(); toast('Still in Build mode.'); };
+$('#confirm-yes').onclick = () => {
+  hideConfirm();
+  applyModel(PENDING || RAW);   // the latest model this page has; the live page asks R once more below
+  setMode('review');
+  if (IS_LIVE) syncTo();
+};
 $('#mode-review').onclick = () => setMode('review');
 $('#mode-build').onclick = () => setMode('build');
 
@@ -1879,6 +1917,7 @@ setSidebar(pref.get('pipeworks-sidebar') !== '0', false);
 renderSession();
 renderBanners();
 updateDirty();
+BASE = structSnap();
 renderAll();
 const p0 = computeLayout(); vids().forEach(i => Object.assign(P(i), p0[i]));
 renderPositions(); view = fitFor(p0); applyView();

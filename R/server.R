@@ -32,6 +32,7 @@ pw_state <- function(path, model = NULL, mode = "auto", port = NA_integer_, toke
   state$origins <- character()
   if (!is.na(state$port)) pw_allow_local(state)
   state$items <- pw_items(path)
+  state$model <- pw_mark_self(state$model, path, state$items)
   state$git_dirs <- pw_git_dirs(path)
   state$fingerprint <- pw_fingerprint(state)
   state
@@ -227,7 +228,7 @@ pw_refresh_qa <- function(state) {
   } else if (is.null(res$value$qa_summary) && !is.null(state$model$qa_summary)) {
     state$qa_error <- paste(c(res$warnings, "The review status could not be read.")[1], collapse = "")
   } else {
-    state$model <- res$value
+    state$model <- pw_mark_self(res$value, state$path, items)
     state$qa_error <- NULL
   }
   invisible(state)
@@ -277,7 +278,7 @@ pw_poll_bg <- function(state) {
     state$model_error <- pw_error_message(res)
     return(TRUE)
   }
-  state$model <- res$value
+  state$model <- pw_mark_self(res$value, state$path, items)
   state$items <- items
   state$model_error <- NULL
   state$qa_error <- NULL
@@ -291,6 +292,41 @@ pw_error_message <- function(e) {
 }
 
 # ---- Live block ------------------------------------------------------------
+
+# Review items the current git user last changed (git history, people mapped
+# through `qa/people` as in `qa_review()`): a verdict from them would be a
+# self-review. Items with uncommitted changes have no author and are left out.
+# One `last_authors()` pass per refresh, never one git call per item.
+pw_self_items <- function(path, items) {
+  if (is.null(items) || !nrow(items) || !git_available() || is.na(git_head(path))) return(character())
+  me <- git_user(path)$email
+  if (is.na(me)) return(character())
+  authors <- tryCatch(last_authors(path, items), error = function(e) NULL)
+  if (is.null(authors)) return(character())
+  people <- read_people(path)
+  known <- !is.na(authors$author_email)
+  authors$id[known & person_of(authors$author_email, people) == person_of(me, people)]
+}
+
+# Every review record of the model gets `self_review_if_you_record` (the page
+# warns before such a verdict).
+pw_mark_self <- function(model, path, items) {
+  if (is.null(model)) return(model)
+  self <- tryCatch(pw_self_items(path, items), error = function(e) character())
+  mark <- function(q) {
+    if (is.null(q)) return(NULL)
+    q$self_review_if_you_record <- q$item %in% self
+    q
+  }
+  for (i in seq_along(model$targets)) {
+    model$targets[[i]]["qa"] <- list(mark(model$targets[[i]]$qa))
+    model$targets[[i]]["qa_file"] <- list(mark(model$targets[[i]]$qa_file))
+  }
+  for (i in seq_along(model$functions)) model$functions[[i]]["qa"] <- list(mark(model$functions[[i]]$qa))
+  for (i in seq_along(model$maps)) model$maps[[i]]["qa"] <- list(mark(model$maps[[i]]$qa))
+  model
+}
+
 
 # Whether `record_verdict()` would refuse for repo-level reasons right now.
 pw_can_record <- function(state) {
@@ -317,9 +353,7 @@ pw_live <- function(state) {
     blockers = I(rec$blockers),
     blocked_reason = rec$reason,
     qa_error = state$qa_error,
-    watch_error = state$watch_error,
-    # the page warns before a self-review (compared with `last_author` of an item)
-    user = if (git_available()) git_user(state$path)$name else NA_character_
+    watch_error = state$watch_error
   )
 }
 
