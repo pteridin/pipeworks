@@ -61,6 +61,9 @@ pw_api_verdict <- function(state, body) {
   if (!is_string(body$item) || !is_string(body$verdict) || !(is.null(body$comment) || is_string(body$comment))) {
     return(pw_json(list(error = "Send `item` and `verdict` (strings) and optionally `comment`."), 400L))
   }
+  if (!body$verdict %in% c("correct", "questionable", "wrong")) {
+    return(pw_json(list(error = "`verdict` must be one of \"correct\", \"questionable\", \"wrong\"."), 400L))
+  }
   res <- tryCatch(record_verdict(state$path, body$item, body$verdict, body$comment), error = function(e) e)
   if (inherits(res, "error")) return(pw_json(list(error = conditionMessage(res)), 409L))
   pw_refresh_after_write(state)

@@ -75,6 +75,7 @@ pw_items <- function(path) {
 
 pw_start <- function(path, mode) {
   state <- pw_state(path, mode = mode)
+  state$real_path <- normalizePath(path, mustWork = TRUE)
   server <- NULL
   for (i in 1:20) {
     state$port <- as.integer(httpuv::randomPort(host = "127.0.0.1"))
@@ -345,6 +346,7 @@ pw_can_record <- function(state) {
 
 pw_live <- function(state) {
   rec <- pw_can_record(state)
+  unc <- uncommitted_reviews(state$path)
   list(
     version = state$version,
     mode = state$mode,
@@ -352,6 +354,7 @@ pw_live <- function(state) {
     can_record = rec$ok,
     blockers = I(rec$blockers),
     blocked_reason = rec$reason,
+    uncommitted = I(if (length(unc)) review_rel(state$path, unc) else character()),
     qa_error = state$qa_error,
     watch_error = state$watch_error
   )

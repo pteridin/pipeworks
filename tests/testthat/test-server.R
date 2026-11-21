@@ -102,6 +102,15 @@ test_that("a verdict from the page is recorded and committed", {
                   body = list(item = "function:count_by_channel", verdict = "wrong"))
   expect_equal(bad$status, 409L)
   expect_match(bad$json$error, "comment is required")
+
+  head <- git_head(repo)
+  for (v in list("corr", "Correct", "", c("correct", "wrong"), NA_character_)) {
+    r <- call_app(state, method = "POST", path = "/api/verdict", body = list(item = "function:count_by_channel", verdict = v))
+    expect_equal(r$status, 400L)
+  }
+  r <- call_app(state, method = "POST", path = "/api/verdict", body = list(item = "function:count_by_channel", verdict = "corr"))
+  expect_match(r$json$error, "correct.*questionable.*wrong")
+  expect_equal(git_head(repo), head)
 })
 
 test_that("uncommitted code blocks verdicts and says which files", {
@@ -191,6 +200,19 @@ test_that("retry commits entries left uncommitted", {
   expect_length(uncommitted_reviews(repo), 0)
 })
 
+test_that("the live block lists verdict files that are not committed", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  expect_length(call_app(state, path = "/api/model")$json$live$uncommitted, 0)
+  r <- record_verdict(repo, "function:count_by_channel", "correct", commit = FALSE)
+  pw_refresh_after_write(state)
+  live <- call_app(state, path = "/api/model")$json$live
+  expect_equal(unlist(live$uncommitted), review_rel(repo, r$file))
+  expect_match(call_app(state, path = "/", token = NULL, query = paste0("token=", state$token))$body, "\"uncommitted\":[", fixed = TRUE)
+  call_app(state, method = "POST", path = "/api/retry")
+  expect_length(call_app(state, path = "/api/model")$json$live$uncommitted, 0)
+})
+
 test_that("pipeworks() reuses the server of a project and pipeworks_stop() stops it", {
   repo <- local_example_repo()
   shown <- character()
@@ -206,6 +228,28 @@ test_that("pipeworks() reuses the server of a project and pipeworks_stop() stops
   expect_equal(shown, c(url, url))
   expect_true(pipeworks_stop(repo))
   expect_false(pipeworks_stop(repo))
+})
+
+test_that("pipeworks_stop() finds a server by its stored real path", {
+  dir <- withr::local_tempdir()
+  real <- normalizePath(dir, mustWork = TRUE)
+  servers <- new.env()
+  servers[["some/other/key"]] <- list(real_path = real)
+  servers[["unrelated"]] <- list(real_path = "/elsewhere")
+  expect_equal(pw_find_server(dir, servers), "some/other/key")
+  expect_equal(pw_find_server(paste0(real, "/"), servers), "some/other/key")
+  expect_equal(pw_find_server(real, new.env()), NA_character_)
+  # the folder is gone: the path as given still matches the stored one
+  unlink(dir, recursive = TRUE)
+  expect_equal(pw_find_server(real, servers), "some/other/key")
+  expect_true(is.na(pw_find_server(file.path(real, "nope"), servers)))
+  skip_on_os("windows")
+  link <- file.path(withr::local_tempdir(), "link")
+  target <- withr::local_tempdir()
+  file.symlink(target, link)
+  servers2 <- new.env()
+  servers2[["k"]] <- list(real_path = normalizePath(target, mustWork = TRUE))
+  expect_equal(pw_find_server(link, servers2), "k")
 })
 
 test_that("the server answers real HTTP requests", {

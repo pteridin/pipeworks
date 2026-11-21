@@ -17,6 +17,14 @@ test_that("embedded JSON cannot close the script tag", {
   expect_equal(jsonlite::fromJSON(json)$files$text, "# </script> inside a comment")
 })
 
+test_that("embedded JSON escapes every less-than sign", {
+  m <- fake_model()
+  m$files$text <- "# <!-- <script>"
+  json <- model_json(m)
+  expect_false(grepl("<", json, fixed = TRUE))
+  expect_equal(jsonlite::fromJSON(json)$files$text, "# <!-- <script>")
+})
+
 test_that("example_project() copies the project without build output", {
   dest <- file.path(withr::local_tempdir(), "survey")
   example_project(dest)

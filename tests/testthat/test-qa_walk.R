@@ -56,6 +56,41 @@ test_that("x quits early, s skips, empty comments are re-asked", {
   expect_equal(sum(!qa_passing(qa_status(repo))), 4)
 })
 
+test_that("running out of input in the comment loop quits without recording", {
+  repo <- walk_repo()
+  s <- scripted(list("q", NA_character_))
+  out <- capture.output(res <- qa_walk(repo, include = "open", input = s$input))
+  expect_equal(nrow(res), 0)
+  expect_length(uncommitted_reviews(repo), 0)
+  expect_false(any(grepl("NA", read_reviews(repo)$comment, fixed = TRUE)))
+})
+
+test_that("an error recording one item is reported and the walk goes on", {
+  repo <- walk_repo()
+  real <- record_verdict
+  n <- 0L
+  local_mocked_bindings(record_verdict = function(...) {
+    n <<- n + 1L
+    if (n == 1L) stop("Commit R/x.R first: something.", call. = FALSE)
+    real(...)
+  })
+  s <- scripted(c("c", "c", "x"))
+  out <- capture.output(res <- qa_walk(repo, include = "open", input = s$input))
+  expect_true(any(grepl("Could not record correct for .*: Commit R/x.R first", out)))
+  expect_equal(nrow(res), 1)
+  expect_true(res$committed)
+  expect_equal(s$calls(), 3)
+})
+
+test_that("a walk reads the git history once", {
+  repo <- walk_repo()
+  real <- last_authors
+  n <- 0L
+  local_mocked_bindings(last_authors = function(...) { n <<- n + 1L; real(...) })
+  capture.output(qa_walk(repo, include = "open", input = scripted("x")$input))
+  expect_equal(n, 1L)
+})
+
 test_that("invalid answers are re-asked", {
   repo <- walk_repo()
   s <- scripted(c("huh", "x"))
@@ -182,6 +217,7 @@ test_that("a failed commit stops the walk", {
   expect_false(res$committed)
   expect_equal(s$calls(), 1)
   expect_true("Stopping the walk." %in% out)
+  expect_true(any(grepl("1 verdict file(s) are not committed yet: run git commit or retry from the editor", out, fixed = TRUE)))
   expect_true(any(grepl("^Saved correct for .* but could not commit it", out)))
 })
 

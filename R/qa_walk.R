@@ -46,7 +46,7 @@ qa_walk <- function(path = ".", base = NULL, include = c("open", "check_again"),
     stop("Your git identity is not set; verdicts are matched by email. Run `git config user.name \"Your Name\"` and `git config user.email you@example.org`.", call. = FALSE)
   }
 
-  st <- qa_status(path)
+  st <- qa_status(path, authors = FALSE)
   pick <- (("open" %in% include) & !qa_passing(st)) | (("check_again" %in% include) & st$status == "check_again")
   st <- st[pick, , drop = FALSE]
   st <- st[order(st$block, st$id), , drop = FALSE]
@@ -58,6 +58,7 @@ qa_walk <- function(path = ".", base = NULL, include = c("open", "check_again"),
 
   base_items <- walk_base_items(path, base, items)
   authors <- last_authors(path, items[match(st$id, items$id), , drop = FALSE])
+  st$last_author <- ifelse(is.na(st$last_author), authors$author_name, st$last_author)
   people <- read_people(path)
   reviews <- read_reviews(path)
   me <- person_of(who$email, people)
@@ -77,14 +78,25 @@ qa_walk <- function(path = ".", base = NULL, include = c("open", "check_again"),
     if (answer == "x") break
     if (answer == "s") next
     comment <- NULL
+    stop_walk <- FALSE
     if (answer != "c") {
       repeat {
-        comment <- trimws(input("Comment: "))
+        a <- input("Comment: ")
+        if (!length(a) || is.na(a[1])) {
+          stop_walk <- TRUE
+          break
+        }
+        comment <- trimws(a[1])
         if (nzchar(comment)) break
         cat("A comment is required.\n")
       }
+      if (stop_walk) break
     }
-    res <- record_verdict(path, row$id, names[[answer]], comment)
+    res <- tryCatch(record_verdict(path, row$id, names[[answer]], comment), error = function(e) e)
+    if (inherits(res, "error")) {
+      cat("Could not record ", names[[answer]], " for ", row$id, ": ", conditionMessage(res), "\n", sep = "")
+      next
+    }
     done[nrow(done) + 1L, ] <- list(row$id, names[[answer]], isTRUE(res$committed))
     if (isTRUE(res$committed)) {
       cat("Recorded ", names[[answer]], " for ", row$id, ", committed ", substr(res$commit, 1, 7), ".\n", sep = "")
@@ -93,6 +105,8 @@ qa_walk <- function(path = ".", base = NULL, include = c("open", "check_again"),
       break
     }
   }
+  n_unc <- length(uncommitted_reviews(path))
+  if (n_unc > 0) cat("\n", uncommitted_message(n_unc), "\n", sep = "")
   invisible(done)
 }
 

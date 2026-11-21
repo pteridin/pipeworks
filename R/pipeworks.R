@@ -71,12 +71,25 @@ pipeworks <- function(path = ".", viewer = getOption("pipeworks.viewer", TRUE), 
 #'   invisibly.
 #' @export
 pipeworks_stop <- function(path = ".") {
-  key <- normalizePath(path, mustWork = FALSE)
+  key <- pw_find_server(path)
+  if (is.na(key)) return(invisible(FALSE))
   state <- pw_servers[[key]]
-  if (is.null(state)) return(invisible(FALSE))
   rm(list = key, envir = pw_servers)
   pw_shutdown(state)
   invisible(TRUE)
+}
+
+# The key in `servers` of the server for `path`: the normalised path, else the
+# server whose stored real path equals the real path of `path` (or `path` as
+# given, when the folder is gone); NA when there is none.
+pw_find_server <- function(path, servers = pw_servers) {
+  key <- normalizePath(path, mustWork = FALSE)
+  if (exists(key, envir = servers, inherits = FALSE)) return(key)
+  real <- tryCatch(normalizePath(path, mustWork = TRUE), error = function(e) sub("[/\\\\]+$", "", path))
+  for (k in ls(servers, all.names = TRUE)) {
+    if (identical(servers[[k]]$real_path, real)) return(k)
+  }
+  NA_character_
 }
 
 #' Write the editor as a standalone HTML file
@@ -109,6 +122,7 @@ editor_page <- function(json) {
 #' @export
 model_json <- function(model) {
   json <- jsonlite::toJSON(unclass(model), auto_unbox = TRUE, null = "null", na = "null", pretty = FALSE)
-  # Keep "</script>" inside strings from closing the tag.
-  gsub("</", "<\\/", json, fixed = TRUE)
+  # "<" only occurs inside strings; escaping all of them keeps "</script>" and
+  # "<!--" from breaking the page.
+  gsub("<", "\\u003c", json, fixed = TRUE)
 }
