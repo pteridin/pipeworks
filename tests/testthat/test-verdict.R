@@ -41,6 +41,7 @@ test_that("busy repositories are refused before writing", {
 test_that("a failing commit keeps the entry and reports it", {
   skip_on_os("windows")
   repo <- verdict_repo()
+  writeLines("b", file.path(repo, "notes.txt")); git_run(repo, c("add", "notes.txt"))
   hook <- file.path(repo, ".git", "hooks", "pre-commit")
   dir.create(dirname(hook), showWarnings = FALSE)
   writeLines(c("#!/usr/bin/env Rscript", "quit(status = 1)"), hook)
@@ -50,8 +51,12 @@ test_that("a failing commit keeps the entry and reports it", {
   expect_true(file.exists(r$file))
   expect_match(r$error, "git")
   expect_true(r$file %in% uncommitted_reviews(repo))
+  expect_equal(git_run(repo, c("diff", "--cached", "--name-only")), "notes.txt")
   expect_error(suppressMessages(qa_review("target:t1", "correct", path = repo)), "saved to .* but not committed")
   unlink(hook)
+  file.create(file.path(repo, ".git", "CHERRY_PICK_HEAD"))
+  expect_error(retry_uncommitted(repo), "cherry-pick in progress")
+  unlink(file.path(repo, ".git", "CHERRY_PICK_HEAD"))
   res <- retry_uncommitted(repo)
   expect_true(all(res$committed))
   expect_equal(nrow(res), 2L)
@@ -63,4 +68,32 @@ test_that("qa_review reports the commit and commit = FALSE leaves it to the user
   expect_message(qa_review("function:f", "correct", path = repo), "committed [0-9a-f]{7}")
   suppressMessages(qa_review("target:t1", "correct", path = repo, commit = FALSE))
   expect_length(uncommitted_reviews(repo), 1)
+})
+
+test_that("git_busy knows rebase and cherry-pick", {
+  repo <- verdict_repo()
+  mark <- function(x, dir = FALSE) {
+    p <- file.path(repo, ".git", x)
+    if (dir) dir.create(p) else file.create(p)
+    p
+  }
+  p <- mark("rebase-merge", TRUE); expect_equal(git_busy(repo), "rebase in progress"); unlink(p, recursive = TRUE)
+  p <- mark("rebase-apply", TRUE); expect_equal(git_busy(repo), "rebase in progress"); unlink(p, recursive = TRUE)
+  p <- mark("CHERRY_PICK_HEAD"); expect_equal(git_busy(repo), "cherry-pick in progress"); unlink(p)
+  expect_true(is.na(git_busy(repo)))
+})
+
+test_that("a project below the repository root commits only its entry", {
+  repo <- local_git_repo(list(
+    "proj/R/a.R" = "f <- function(x) x", "proj/_targets.R" = "list(tar_target(t1, f(1)))", "notes.txt" = "a"
+  ))
+  set_git_user(repo, "Bob", "bob@wig2.de")
+  proj <- file.path(repo, "proj")
+  r <- record_verdict(proj, "function:f", "correct")
+  expect_true(r$committed)
+  expect_equal(git_run(repo, c("log", "-1", "--format=%s")), "qa: correct function:f")
+  expect_match(git_run(repo, c("show", "--name-only", "--format=", "HEAD")), "^proj/qa/reviews/.*\\.json$")
+  expect_length(uncommitted_reviews(proj), 0)
+  suppressMessages(qa_review("target:t1", "correct", path = proj, commit = FALSE))
+  expect_length(uncommitted_reviews(proj), 1)
 })

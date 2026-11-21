@@ -7,7 +7,7 @@
 record_verdict <- function(path, item, verdict, comment = NULL, commit = TRUE) {
   check_project(path)
   verdict <- match.arg(verdict, c("correct", "questionable", "wrong"))
-  if (!git_available()) stop("`git` was not found on the PATH; qa_review() needs it.", call. = FALSE)
+  if (!git_available()) stop("`git` was not found on the PATH; recording a verdict needs git.", call. = FALSE)
   busy <- git_busy(path)
   if (!is.na(busy)) stop("Cannot record a verdict: ", busy, ".", call. = FALSE)
   if (verdict != "correct" && (is.null(comment) || !nzchar(trimws(paste(comment, collapse = ""))))) {
@@ -72,19 +72,24 @@ record_verdict <- function(path, item, verdict, comment = NULL, commit = TRUE) {
 }
 
 
-# Relative path of `file` below `path` (what git is given with `-C path`).
-review_rel <- function(path, file) {
-  file <- normalizePath(file, winslash = "/", mustWork = FALSE)
-  root <- paste0(normalizePath(path, winslash = "/", mustWork = FALSE), "/")
-  if (startsWith(file, root)) substring(file, nchar(root) + 1L) else file
-}
+# Entries live in `qa/reviews/` below the project; git gets the project-relative
+# name (no path normalisation, which differs for files that do not exist yet).
+review_rel <- function(path, file) paste0("qa/reviews/", basename(file))
 
 # Commit only `file` (an entry below `path`) with `message`; returns the sha.
-# Other staged work stays staged. Hooks run; errors carry git's message.
+# Other staged work stays staged. Hooks run; errors carry git's message. A
+# failed commit unstages the entry again, so the user's next commit does not
+# sweep it in.
 commit_verdict <- function(path, file, message) {
   rel <- review_rel(path, file)
   git_run(path, c("add", "--", rel))
-  git_run(path, c("commit", "-q", "--only", "-m", message, "--", rel))
+  tryCatch(
+    git_run(path, c("commit", "-q", "--only", "-m", message, "--", rel)),
+    error = function(e) {
+      git_try(path, c("reset", "-q", "--", rel))
+      stop(conditionMessage(e), call. = FALSE)
+    }
+  )
   git_head(path)
 }
 
@@ -105,20 +110,21 @@ git_busy <- function(path) {
   if (any(hit)) names(marks)[hit][1] else NA_character_
 }
 
-# Review entry files (full paths, like `write_review()`) that are not committed.
+# Review entry files (full paths, like `write_review()`) that are added,
+# modified or untracked; never deletions or renames.
 uncommitted_reviews <- function(path) {
-  st <- git_try(path, c("status", "--porcelain", "--untracked-files=all", "--", "qa/reviews"))
-  if (!length(st)) return(character())
-  prefix <- git_try(path, c("rev-parse", "--show-prefix"))
-  prefix <- if (length(prefix)) prefix[1] else ""
-  rel <- substring(st, 4)
-  rel <- substring(rel, nchar(prefix) + 1L)
+  opts <- c("-c", "core.quotepath=off")
+  new <- git_try(path, c(opts, "ls-files", "--others", "--exclude-standard", "--", "qa/reviews"))
+  changed <- git_try(path, c(opts, "diff", "--name-only", "--no-renames", "--diff-filter=AM", "--relative", "HEAD", "--", "qa/reviews"))
+  rel <- sort(unique(c(new, changed)))
   rel <- rel[grepl("\\.json$", rel)]
   if (length(rel)) file.path(path, rel) else character()
 }
 
 # Commit every uncommitted entry, one commit each.
 retry_uncommitted <- function(path) {
+  busy <- git_busy(path)
+  if (!is.na(busy)) stop("Cannot commit verdicts: ", busy, ".", call. = FALSE)
   files <- uncommitted_reviews(path)
   error <- rep(NA_character_, length(files))
   for (i in seq_along(files)) {
