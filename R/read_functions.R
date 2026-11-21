@@ -13,6 +13,7 @@
 #' @family readers
 #' @export
 read_functions <- function(path = ".") {
+  check_project(path)
   rel <- list.files(file.path(path, "R"), pattern = "\\.[Rr]$", recursive = TRUE, all.files = TRUE)
   rel <- file.path("R", sort(rel, method = "radix"))
   fns <- unlist(lapply(rel, function(f) read_functions_file(file.path(path, f), rel = f)), recursive = FALSE)

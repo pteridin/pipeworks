@@ -12,6 +12,7 @@
 #' @return The entry (a list), invisibly.
 #' @export
 qa_review <- function(item, verdict = c("correct", "questionable", "wrong"), comment = NULL, path = ".") {
+  check_project(path)
   verdict <- match.arg(verdict)
   if (!git_available()) stop("`git` was not found on the PATH; qa_review() needs it.", call. = FALSE)
   if (verdict != "correct" && (is.null(comment) || !nzchar(trimws(paste(comment, collapse = ""))))) {

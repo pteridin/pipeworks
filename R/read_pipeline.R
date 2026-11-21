@@ -31,6 +31,7 @@
 #' model
 #' }
 read_pipeline <- function(path = ".", status = TRUE) {
+  check_project(path)
   path <- normalizePath(path, mustWork = TRUE)
   if (!file.exists(file.path(path, "_targets.R"))) {
     stop("No _targets.R found in ", path, call. = FALSE)

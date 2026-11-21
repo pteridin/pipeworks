@@ -15,6 +15,7 @@
 #' pipeworks(example_project())
 #' }
 pipeworks <- function(path = ".", viewer = getOption("pipeworks.viewer", TRUE)) {
+  check_project(path)
   model <- read_pipeline(path)
   file <- pipeworks_html(model, file.path(tempfile("pipeworks-"), "index.html"))
   if (viewer && requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {

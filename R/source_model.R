@@ -32,6 +32,7 @@ is_code_file <- function(f) f == "_targets.R" | grepl("^R/.+\\.[Rr]$", f)
 #'   `call`, `path`).
 #' @noRd
 read_source <- function(path = ".") {
+  check_project(path)
   r_files <- list.files(file.path(path, "R"), pattern = "\\.[Rr]$", recursive = TRUE, all.files = TRUE)
   files <- file.path("R", sort(r_files, method = "radix"))
   if (file.exists(file.path(path, "_targets.R"))) files <- c(files, "_targets.R")

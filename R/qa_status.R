@@ -32,6 +32,7 @@ status_levels <- c("unreviewed", "changed", "check_again", "correct", "questiona
 #'   pipeworks cannot review, which makes [qa_check()] fail.
 #' @export
 qa_status <- function(path = ".", base = NULL, orphans = FALSE, authors = TRUE) {
+  check_project(path)
   src <- read_source(path)
   items <- src$items
   reviews <- read_reviews(path)
@@ -143,6 +144,7 @@ qa_passing <- function(st, allow_questionable = TRUE) {
 #' @return The status table, invisibly. Signals an error on failure.
 #' @export
 qa_check <- function(path = ".", allow_questionable = TRUE) {
+  check_project(path)
   st <- qa_status(path, authors = FALSE)
   s <- as.character(st$status)
   bad <- list(

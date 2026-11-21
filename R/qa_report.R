@@ -24,6 +24,7 @@
 #' @export
 qa_report <- function(path = ".", ref = NULL, output = "qa-report.pdf", signatures = FALSE,
                       final = FALSE, title = NULL) {
+  check_project(path)
   if (!nzchar(Sys.which("quarto"))) {
     stop("Quarto is needed to render the QA report (https://quarto.org/docs/get-started/); ",
          "it was not found on the PATH.", call. = FALSE)
