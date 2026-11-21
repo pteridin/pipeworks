@@ -25,7 +25,7 @@ Changes since the QA MVP.
 * Every verdict is committed automatically, one commit per verdict
   (`qa: <verdict> <item>`) containing only its entry file. `qa_review()` has
   `commit = TRUE`; use `commit = FALSE` for the old behaviour. It needs a git
-  identity and refuses during a merge, rebase or cherry-pick.
+  identity and refuses during a merge, rebase, cherry-pick or revert.
 * Stricter loader detection: code loaded indirectly, for example
   `lapply(files, source)`, now fails `qa_check()` until it lives in `R/`.
 * One-time renumbering of unnamed top-level objects: ids such as
