@@ -211,9 +211,10 @@ pw_quietly <- function(expr) {
 # not parse, or the status cannot be read (an error, or a result without
 # `qa_summary` where there was one), the last items and status stay and
 # `live$qa_error` says why; the next good refresh clears it. Warnings alone
-# are no failure.
+# are no failure. `version` moves only when the status or `qa_error` changed.
 pw_refresh_qa <- function(state) {
-  on.exit(state$version <- state$version + 1L, add = TRUE)
+  before <- list(state$model, state$qa_error)
+  on.exit(if (!identical(before, list(state$model, state$qa_error))) state$version <- state$version + 1L, add = TRUE)
   items <- pw_read_items(state$path)
   if (inherits(items, "error")) {
     state$qa_error <- conditionMessage(items)

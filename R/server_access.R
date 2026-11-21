@@ -63,13 +63,30 @@ pw_allow_local <- function(state) {
 # `pipeworks.allowed_origins` (read per request, so setting it needs no
 # restart).
 pw_allowed <- function(state) {
-  extra <- as.character(getOption("pipeworks.allowed_origins", character()))
-  extra <- extra[nzchar(extra)]
+  extra <- pw_option_origins()
   list(
     hosts = unique(c(state$hosts, sub("^[^:]+://", "", extra))),
     origins = unique(c(state$origins, extra))
   )
 }
+
+# `pipeworks.allowed_origins`, normalised: a trailing "/" dropped; values
+# without a scheme are ignored, with a warning once per value.
+pw_option_origins <- function() {
+  x <- as.character(getOption("pipeworks.allowed_origins", character()))
+  x <- sub("/+$", "", trimws(x))
+  x <- x[nzchar(x)]
+  ok <- grepl("^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+$", x)
+  for (bad in setdiff(x[!ok], ls(pw_warned, all.names = TRUE))) {
+    assign(bad, TRUE, envir = pw_warned)
+    warning("pipeworks.allowed_origins needs scheme://host[:port], e.g. https://rstudio.example.org; ignoring \"",
+            bad, "\".", call. = FALSE)
+  }
+  x[ok]
+}
+
+# Option values already warned about.
+pw_warned <- new.env(parent = emptyenv())
 
 pw_forbidden <- function(what, host, origin) {
   pw_text(paste0(
@@ -83,7 +100,7 @@ pw_forbidden <- function(what, host, origin) {
 
 # The address RStudio Server or Workbench gives the local URL, else NULL.
 pw_rstudio_server_url <- function(url) {
-  if (!requireNamespace("rstudioapi", quietly = TRUE) || !rstudioapi::isAvailable()) return(NULL)
+  if (!rstudio_available()) return(NULL)
   mode <- tryCatch(rstudioapi::versionInfo()$mode, error = function(e) NULL)
   if (!identical(mode, "server")) return(NULL)
   tryCatch(rstudioapi::translateLocalUrl(url, absolute = TRUE), error = function(e) NULL)
@@ -91,7 +108,7 @@ pw_rstudio_server_url <- function(url) {
 
 # Viewer pane in RStudio (it translates local URLs itself), else the browser.
 show_url <- function(url, viewer) {
-  if (isTRUE(viewer) && requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+  if (isTRUE(viewer) && rstudio_available()) {
     rstudioapi::viewer(url)
   } else {
     utils::browseURL(url)
@@ -102,13 +119,18 @@ show_url <- function(url, viewer) {
 # GUI session (elsewhere it would start a terminal editor). Returns
 # `list(ok, error)`.
 open_in_editor <- function(file, line) {
-  if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+  if (rstudio_available()) {
     rstudioapi::navigateToFile(file, line = line)
     return(list(ok = TRUE))
   }
-  if (interactive() && .Platform$GUI %in% c("AQUA", "Rgui", "RStudio")) {
+  if (is_gui_session()) {
     utils::file.edit(file)
     return(list(ok = TRUE))
   }
   list(ok = FALSE, error = sprintf("No editor can be opened from this R session; open %s:%d yourself.", file, as.integer(line)))
 }
+
+# Seams for tests (mocked so no test reaches a real editor or browser).
+rstudio_available <- function() requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()
+
+is_gui_session <- function() interactive() && .Platform$GUI %in% c("AQUA", "Rgui", "RStudio")

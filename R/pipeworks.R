@@ -55,7 +55,7 @@ pipeworks <- function(path = ".", viewer = getOption("pipeworks.viewer", TRUE), 
     assign(key, state, envir = pw_servers)
   }
   # the Viewer translates local addresses itself; a browser needs the public one
-  in_viewer <- isTRUE(viewer) && requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()
+  in_viewer <- isTRUE(viewer) && rstudio_available()
   url <- pw_public_url(state)
   show_url(if (in_viewer) pw_url(state) else url, viewer)
   invisible(url)

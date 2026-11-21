@@ -10,7 +10,13 @@ server_model <- function() {
   example_cache$server_model
 }
 
+# No test may reach a real RStudio, editor or browser, wherever it runs.
+local_no_ide <- function(env = parent.frame()) {
+  local_mocked_bindings(rstudio_available = function() FALSE, is_gui_session = function() FALSE, .env = env)
+}
+
 local_state <- function(path, opened = NULL, env = parent.frame()) {
+  local_no_ide(env)
   state <- pw_state(path, model = server_model(), mode = "review", port = 4321L,
                     open_file = function(file, line) if (!is.null(opened)) opened(file, line))
   withr::defer(pw_kill_bg(state), envir = env)
@@ -113,9 +119,14 @@ test_that("uncommitted code blocks verdicts and says which files", {
 test_that("a change below qa/ refreshes the status in-session", {
   repo <- local_example_repo()
   state <- local_state(repo)
+  pw_refresh_qa(state)
   v0 <- state$version
   expect_equal(pw_tick(state), "none")
+  # a qa/ change that leaves every status alone does not move the version
   writeLines(c("Name: Senior", "Emails: senior@example.org"), file.path(repo, "qa", "people"))
+  expect_equal(pw_tick(state), "qa")
+  expect_equal(state$version, v0)
+  record_verdict(repo, "function:count_by_channel", "correct", commit = FALSE)
   expect_equal(pw_tick(state), "qa")
   expect_equal(state$version, v0 + 1L)
   expect_null(state$bg)
@@ -182,6 +193,7 @@ test_that("retry commits entries left uncommitted", {
 test_that("pipeworks() reuses the server of a project and pipeworks_stop() stops it", {
   repo <- local_example_repo()
   shown <- character()
+  local_no_ide()
   local_mocked_bindings(
     read_pipeline = function(path, ...) server_model(),
     show_url = function(url, viewer) shown <<- c(shown, url)
@@ -198,6 +210,7 @@ test_that("pipeworks() reuses the server of a project and pipeworks_stop() stops
 test_that("the server answers real HTTP requests", {
   skip_if_not_installed("curl")
   repo <- local_example_repo()
+  local_no_ide()
   local_mocked_bindings(read_pipeline = function(path, ...) server_model(), show_url = function(url, viewer) NULL)
   withr::defer(pipeworks_stop(repo))
   url <- pipeworks(repo, viewer = FALSE, mode = "review")
@@ -345,6 +358,7 @@ test_that("tokens are 32 hex digits from every source", {
 test_that("on RStudio Server the translated address is shown and allowed; unloading stops servers", {
   repo <- local_example_repo()
   shown <- character()
+  local_no_ide()
   local_mocked_bindings(
     read_pipeline = function(path, ...) server_model(),
     show_url = function(url, viewer) shown <<- c(shown, url),
@@ -360,4 +374,17 @@ test_that("on RStudio Server the translated address is shown and allowed; unload
   expect_true(paste0("127.0.0.1:", state$port) %in% state$hosts)
   pw_stop_all()
   expect_false(pipeworks_stop(repo))
+})
+
+test_that("allowed origins from the option are normalised", {
+  rm(list = ls(pw_warned, all.names = TRUE), envir = pw_warned)
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  req <- list(method = "POST", path = "/api/retry", host = "rstudio.example.org", origin = "https://rstudio.example.org")
+  withr::local_options(pipeworks.allowed_origins = "https://rstudio.example.org/")
+  expect_equal(do.call(call_app, c(list(state), req))$status, 200L)
+  withr::local_options(pipeworks.allowed_origins = "rstudio.example.org")
+  expect_warning(res <- do.call(call_app, c(list(state), req)), "needs scheme://host\\[:port\\]")
+  expect_equal(res$status, 403L)
+  expect_no_warning(do.call(call_app, c(list(state), req)))
 })
