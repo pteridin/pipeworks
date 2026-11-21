@@ -479,7 +479,7 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 
 <div class="overlay" id="overlay" hidden><div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="m-name"></div></div>
 <div class="toast" id="toast" role="status"><span id="toast-msg"></span><button id="toast-act" hidden>Undo</button></div>
-<div class="nodata" id="nodata" hidden><div><h1>No pipeline loaded</h1><p class="help">Open this editor from R with <code>pipeworks::pipeworks()</code> in a targets project.</p></div></div>
+<div class="nodata" id="nodata" hidden><div><h1>No pipeline loaded</h1><p class="help">Open this editor from R with <code>pipeworks::pipeworks()</code> in a targets project.</p><p class="help" id="nodata-why"></p></div></div>
 
 <script id="pipeworks-data" type="application/json">null</script>
 <script>
@@ -494,8 +494,16 @@ const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ---------- Load the model written by pipeworks::pipeworks() ---------- */
 let RAW = null;
-try { RAW = JSON.parse($('#pipeworks-data').textContent); } catch { RAW = null; }
-if (!RAW || !RAW.targets) { $('#nodata').hidden = false; return; }
+let WHY = '';
+const DATA_TAG = $('#pipeworks-data');
+if (!DATA_TAG) WHY = 'The page has no data element.';
+else {
+  const txt = DATA_TAG.textContent;
+  try { RAW = JSON.parse(txt); } catch (e) { RAW = null; WHY = `The embedded data (${txt.length} characters) could not be read: ${e.message}`; }
+  if (!WHY && RAW === null) WHY = 'No data was embedded: this is the bare template, not a page written by pipeworks().';
+  else if (!WHY && !RAW.targets) WHY = 'The embedded data has no targets.';
+}
+if (!RAW || !RAW.targets) { $('#nodata').hidden = false; $('#nodata-why').textContent = WHY; console.error('[pipeworks] ' + WHY); return; }
 
 function fromModel(D) {
   const fns = {};
