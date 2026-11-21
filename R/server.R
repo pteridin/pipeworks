@@ -334,7 +334,7 @@ pw_can_record <- function(state) {
   no <- function(reason, blockers = character()) list(ok = FALSE, reason = reason, blockers = blockers)
   if (!git_available()) return(no("git was not found on the PATH."))
   busy <- git_busy(path)
-  if (!is.na(busy)) return(no(paste0("Cannot record a verdict: ", busy, "."), busy))
+  if (!is.na(busy)) return(no(busy_message(busy, "Cannot record a verdict"), busy))
   if (is.na(git_head(path))) return(no("Commit your code first: this project has no commits yet."))
   dirty <- uncommitted_code(path, state$items)
   if (length(dirty)) return(no("Commit your changes first.", dirty))

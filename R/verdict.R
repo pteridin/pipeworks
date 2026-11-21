@@ -9,7 +9,7 @@ record_verdict <- function(path, item, verdict, comment = NULL, commit = TRUE) {
   verdict <- match.arg(verdict, c("correct", "questionable", "wrong"))
   if (!git_available()) stop("`git` was not found on the PATH; recording a verdict needs git.", call. = FALSE)
   busy <- git_busy(path)
-  if (!is.na(busy)) stop("Cannot record a verdict: ", busy, ".", call. = FALSE)
+  if (!is.na(busy)) stop(busy_message(busy, "Cannot record a verdict"), call. = FALSE)
   if (verdict != "correct" && (is.null(comment) || !nzchar(trimws(paste(comment, collapse = ""))))) {
     stop("A comment is required for verdict \"", verdict, "\".", call. = FALSE)
   }
@@ -104,10 +104,24 @@ git_busy <- function(path) {
     "rebase in progress" = "rebase-merge",
     "rebase in progress" = "rebase-apply",
     "cherry-pick in progress" = "CHERRY_PICK_HEAD",
+    "revert in progress" = "REVERT_HEAD",
     "index.lock present" = "index.lock"
   )
   hit <- file.exists(file.path(dir, marks))
-  if (any(hit)) names(marks)[hit][1] else NA_character_
+  if (any(hit)) return(names(marks)[hit][1])
+  # A commit on a detached HEAD belongs to no branch and is lost on checkout.
+  if (is.null(git_try(path, c("symbolic-ref", "-q", "HEAD")))) return(detached_reason)
+  NA_character_
+}
+
+detached_reason <- "not on a branch (detached HEAD)"
+
+# The sentence for a `git_busy()` reason.
+busy_message <- function(busy, prefix) {
+  if (identical(busy, detached_reason)) {
+    return("You are not on a branch (detached HEAD). Check out the branch under review first, e.g. git switch dev/<topic>.")
+  }
+  paste0(prefix, ": ", busy, ".")
 }
 
 # Review entry files (full paths, like `write_review()`) that are added,
@@ -124,7 +138,7 @@ uncommitted_reviews <- function(path) {
 # Commit every uncommitted entry, one commit each.
 retry_uncommitted <- function(path) {
   busy <- git_busy(path)
-  if (!is.na(busy)) stop("Cannot commit verdicts: ", busy, ".", call. = FALSE)
+  if (!is.na(busy)) stop(busy_message(busy, "Cannot commit verdicts"), call. = FALSE)
   files <- uncommitted_reviews(path)
   error <- rep(NA_character_, length(files))
   for (i in seq_along(files)) {

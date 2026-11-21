@@ -34,7 +34,7 @@ qa_walk <- function(path = ".", base = NULL, include = c("open", "check_again"),
   check_project(path)
   if (!git_available()) stop("`git` was not found on the PATH; recording a verdict needs git.", call. = FALSE)
   busy <- git_busy(path)
-  if (!is.na(busy)) stop("Cannot record a verdict: ", busy, ".", call. = FALSE)
+  if (!is.na(busy)) stop(busy_message(busy, "Cannot record a verdict"), call. = FALSE)
   items <- read_source(path)$items
   dirty <- uncommitted_code(path, items)
   if (length(dirty)) {

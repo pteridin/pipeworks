@@ -171,11 +171,10 @@ test_that("reviewing on the base branch itself says so", {
 })
 
 test_that("a failed commit stops the walk", {
-  skip_on_os("windows")
   repo <- walk_repo()
   hook <- file.path(repo, ".git", "hooks", "pre-commit")
   dir.create(dirname(hook), showWarnings = FALSE)
-  writeLines(c("#!/usr/bin/env Rscript", "quit(status = 1)"), hook)
+  writeLines(c("#!/bin/sh", "exit 1"), hook)
   Sys.chmod(hook, "755")
   s <- scripted(rep("c", 5))
   out <- capture.output(res <- qa_walk(repo, include = "open", input = s$input))

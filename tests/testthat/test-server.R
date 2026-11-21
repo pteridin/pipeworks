@@ -317,6 +317,16 @@ test_that("a busy repository blocks verdicts with the reason", {
   expect_true("merge in progress" %in% unlist(live$blockers))
 })
 
+test_that("a detached HEAD blocks verdicts with the reason", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  git_run(repo, c("checkout", "-q", "--detach"))
+  live <- call_app(state, path = "/api/model")$json$live
+  expect_false(live$can_record)
+  expect_true("not on a branch (detached HEAD)" %in% unlist(live$blockers))
+  expect_match(live$blocked_reason, "git switch dev/<topic>", fixed = TRUE)
+})
+
 test_that("open outside an interactive GUI session asks the user to open the file", {
   repo <- local_example_repo()
   state <- local_state(repo)
