@@ -17,13 +17,17 @@ RoxygenNote: 8.0.0
 Depends:
     R (>= 4.1.0)
 Imports:
+    callr,
+    httpuv,
     jsonlite,
+    later,
     roxygen2,
     targets (>= 1.5.0),
     tools,
     utils,
     withr
 Suggests:
+    curl,
     dplyr,
     ggplot2,
     readr,

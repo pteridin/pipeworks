@@ -4,26 +4,50 @@
 \alias{pipeworks}
 \title{Open the pipeline in the pipeworks editor}
 \usage{
-pipeworks(path = ".", viewer = getOption("pipeworks.viewer", TRUE))
+pipeworks(
+  path = ".",
+  viewer = getOption("pipeworks.viewer", TRUE),
+  mode = c("auto", "review", "build")
+)
 }
 \arguments{
 \item{path}{Root folder of the targets project, containing \verb{_targets.R}.}
 
 \item{viewer}{Whether to use the RStudio Viewer pane when available.}
+
+\item{mode}{\code{"review"} (structure read-only, verdict buttons), \code{"build"}
+(editing, no verdict buttons) or \code{"auto"}: Review when there are open
+items (not passing \code{\link[=qa_check]{qa_check()}}) last changed by someone other than the
+current git user, else Build. The page can switch modes at any time.}
 }
 \value{
-The \code{pipeworks_model}, invisibly.
+The address of the editor, invisibly.
 }
 \description{
-Reads the targets project in \code{path} and shows it in the RStudio Viewer
-pane, or in the browser outside RStudio. The console stays free.
+Reads the targets project in \code{path}, starts a small web server inside the
+R session and shows the editor from it in the RStudio Viewer pane, or in
+the browser outside RStudio. The console stays free.
 }
 \details{
-This version shows a snapshot: run \code{pipeworks()} again after editing your
-files to refresh it. Edits made in the editor are not written back yet.
+The page stays connected to R: it refreshes by itself when files in \verb{R/},
+\verb{_targets.R}, the report sources, \verb{qa/} or the git branch change (the
+review status at once, the pipeline structure in a background process),
+records verdicts like \code{\link[=qa_review]{qa_review()}} (each one committed on its own), and
+opens items in RStudio. Edits of the pipeline made in the editor are not
+written back yet.
+
+The server listens on \verb{127.0.0.1} only and answers only requests that carry
+its random token. There is one server per project: calling \code{pipeworks()}
+again reuses it (open tabs keep working) and shows the editor again. It
+stops with \code{\link[=pipeworks_stop]{pipeworks_stop()}} or when the R session ends.
 }
 \examples{
 \dontrun{
-pipeworks(example_project())
+path <- example_project(git = TRUE)
+pipeworks(path)
+pipeworks_stop(path)
 }
+}
+\seealso{
+\code{\link[=pipeworks_html]{pipeworks_html()}} for a static snapshot without a server.
 }

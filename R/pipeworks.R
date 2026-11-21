@@ -1,29 +1,73 @@
 #' Open the pipeline in the pipeworks editor
 #'
-#' Reads the targets project in `path` and shows it in the RStudio Viewer
-#' pane, or in the browser outside RStudio. The console stays free.
+#' Reads the targets project in `path`, starts a small web server inside the
+#' R session and shows the editor from it in the RStudio Viewer pane, or in
+#' the browser outside RStudio. The console stays free.
 #'
-#' This version shows a snapshot: run `pipeworks()` again after editing your
-#' files to refresh it. Edits made in the editor are not written back yet.
+#' The page stays connected to R: it refreshes by itself when files in `R/`,
+#' `_targets.R`, the report sources, `qa/` or the git branch change (the
+#' review status at once, the pipeline structure in a background process),
+#' records verdicts like [qa_review()] (each one committed on its own), and
+#' opens items in RStudio. Edits of the pipeline made in the editor are not
+#' written back yet.
+#'
+#' The server listens on `127.0.0.1` only and answers only requests that carry
+#' its random token. There is one server per project: calling `pipeworks()`
+#' again reuses it (open tabs keep working) and shows the editor again. It
+#' stops with [pipeworks_stop()] or when the R session ends.
 #'
 #' @param path Root folder of the targets project, containing `_targets.R`.
 #' @param viewer Whether to use the RStudio Viewer pane when available.
-#' @return The `pipeworks_model`, invisibly.
+#' @param mode `"review"` (structure read-only, verdict buttons), `"build"`
+#'   (editing, no verdict buttons) or `"auto"`: Review when there are open
+#'   items (not passing [qa_check()]) last changed by someone other than the
+#'   current git user, else Build. The page can switch modes at any time.
+#' @return The address of the editor, invisibly.
+#' @seealso [pipeworks_html()] for a static snapshot without a server.
 #' @export
 #' @examples
 #' \dontrun{
-#' pipeworks(example_project())
+#' path <- example_project(git = TRUE)
+#' pipeworks(path)
+#' pipeworks_stop(path)
 #' }
-pipeworks <- function(path = ".", viewer = getOption("pipeworks.viewer", TRUE)) {
+pipeworks <- function(path = ".", viewer = getOption("pipeworks.viewer", TRUE), mode = c("auto", "review", "build")) {
   check_project(path)
-  model <- read_pipeline(path)
-  file <- pipeworks_html(model, file.path(tempfile("pipeworks-"), "index.html"))
-  if (viewer && requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
-    rstudioapi::viewer(file)
+  mode <- match.arg(mode)
+  key <- normalizePath(path, mustWork = TRUE)
+  state <- pw_servers[[key]]
+  if (!is.null(state) && pw_running(state)) {
+    new_mode <- resolve_mode(key, mode)
+    if (!identical(new_mode, state$mode)) {
+      state$mode <- new_mode
+      state$version <- state$version + 1L
+    }
   } else {
-    utils::browseURL(file)
+    if (!is.null(state)) pw_shutdown(state)
+    state <- pw_start(key, mode)
+    assign(key, state, envir = pw_servers)
   }
-  invisible(model)
+  url <- pw_url(state)
+  show_url(url, viewer)
+  invisible(url)
+}
+
+#' Stop the pipeworks server of a project
+#'
+#' Stops the server [pipeworks()] started for `path`. Open editor pages then
+#' show that the connection to R is lost.
+#'
+#' @param path Root folder of the targets project.
+#' @return `TRUE` if a server was stopped, `FALSE` if none was running,
+#'   invisibly.
+#' @export
+pipeworks_stop <- function(path = ".") {
+  key <- normalizePath(path, mustWork = FALSE)
+  state <- pw_servers[[key]]
+  if (is.null(state)) return(invisible(FALSE))
+  rm(list = key, envir = pw_servers)
+  pw_shutdown(state)
+  invisible(TRUE)
 }
 
 #' Write the editor as a standalone HTML file
@@ -33,15 +77,20 @@ pipeworks <- function(path = ".", viewer = getOption("pipeworks.viewer", TRUE)) 
 #' @return `file`, invisibly.
 #' @export
 pipeworks_html <- function(model, file) {
+  html <- editor_page(model_json(model))
+  dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
+  writeLines(html, file, useBytes = TRUE)
+  invisible(file)
+}
+
+# The editor template with `json` (from `model_json()`) embedded.
+editor_page <- function(json) {
   template <- system.file("app", "index.html", package = "pipeworks", mustWork = TRUE)
   html <- paste(readLines(template, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
   placeholder <- '<script id="pipeworks-data" type="application/json">null</script>'
   if (!grepl(placeholder, html, fixed = TRUE)) stop("The editor template has no data placeholder.", call. = FALSE)
-  data <- sprintf('<script id="pipeworks-data" type="application/json">%s</script>', model_json(model))
-  html <- sub(placeholder, data, html, fixed = TRUE)
-  dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
-  writeLines(html, file, useBytes = TRUE)
-  invisible(file)
+  data <- sprintf('<script id="pipeworks-data" type="application/json">%s</script>', json)
+  sub(placeholder, data, html, fixed = TRUE)
 }
 
 #' Convert a pipeworks model to JSON

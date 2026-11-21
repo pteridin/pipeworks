@@ -36,14 +36,42 @@ read_pipeline <- function(path = ".", status = TRUE) {
   if (!file.exists(file.path(path, "_targets.R"))) {
     stop("No _targets.R found in ", path, call. = FALSE)
   }
-  withr::local_dir(path)
+  assemble_model(path, targets_info(path, status))
+}
 
+# Everything the model needs from targets, i.e. the part that runs
+# `_targets.R`. Uses only base R and targets so that the live server can run
+# it in a background process (`callr::r_bg()`, with `callr_function = NULL`:
+# that process is fresh already) and assemble the model in-session.
+targets_info <- function(path, status = TRUE, callr_function = callr::r) {
+  old <- setwd(path)
+  on.exit(setwd(old), add = TRUE)
+  manifest <- targets::tar_manifest(
+    fields = c("name", "command", "pattern", "description", "format"),
+    callr_function = callr_function
+  )
+  network <- targets::tar_network(targets_only = FALSE, outdated = FALSE, callr_function = callr_function)
+  info <- list(manifest = manifest, network = network, status = status, store = FALSE,
+               progress = NULL, outdated = character(), branches = NULL)
+  if (status && dir.exists(targets::tar_config_get("store"))) {
+    info$store <- TRUE
+    info$progress <- tryCatch(targets::tar_progress(), error = function(e) NULL)
+    info$outdated <- tryCatch(targets::tar_outdated(callr_function = callr_function), error = function(e) character())
+    info$branches <- tryCatch(targets::tar_progress_branches(), error = function(e) NULL)
+  }
+  info
+}
+
+# The model from `targets_info()` output plus the static readers (roxygen,
+# source model, QA). Nothing here runs pipeline code.
+assemble_model <- function(path, info) {
+  withr::local_dir(path)
   fns <- read_functions(".")
-  manifest <- targets::tar_manifest(fields = c("name", "command", "pattern", "description", "format"))
-  network <- targets::tar_network(targets_only = FALSE, outdated = FALSE)
+  manifest <- info$manifest
+  network <- info$network
   target_names <- manifest$name
-  states <- if (status) read_status(target_names) else stats::setNames(rep("unknown", length(target_names)), target_names)
-  branches <- if (status) read_branches(target_names) else integer()
+  states <- read_status(target_names, info)
+  branches <- read_branches(target_names, info)
   src <- tryCatch(read_source("."), error = function(e) {
     warning("Cannot place targets in blocks: ", conditionMessage(e), call. = FALSE)
     NULL
@@ -51,7 +79,6 @@ read_pipeline <- function(path = ".", status = TRUE) {
   items <- if (is.null(src)) NULL else src$items
   placed <- place_targets(target_names, items)
   maps <- map_records(items, placed)
-  qa <- read_qa(".", items)
 
   types <- stats::setNames(network$vertices$type, network$vertices$name)
   edges <- network$edges
@@ -78,32 +105,15 @@ read_pipeline <- function(path = ".", status = TRUE) {
       branches = if (!is.na(row$pattern) && row$name %in% names(branches)) branches[[row$name]] else NULL,
       block = placed$block[[i]],
       map = placed$map[[i]],
-      qa = qa$item(target_item(row$name, placed$map[[i]])),
-      # the report source of a factory target (`file:report.Rmd`) belongs to its box
-      qa_file = if (length(call$source) && !is.na(call$source)) qa$item(paste0("file:", call$source))
+      qa = NULL,
+      qa_file = NULL
     )
   })
   names(targets) <- target_names
 
-  for (name in names(fns)) {
-    fns[[name]]$used_by <- unique(fn_edges$to[fn_edges$from == name])
-    fns[[name]]["qa"] <- list(qa$item(paste0("function:", name)))
-  }
-  for (i in seq_along(maps)) maps[[i]]["qa"] <- list(qa$item(maps[[i]]$id))
+  for (name in names(fns)) fns[[name]]$used_by <- unique(fn_edges$to[fn_edges$from == name])
   blocks <- unique(stats::na.omit(unlist(placed$block)))
   blocks <- c(sort(blocks[grepl("^R/", blocks)]), blocks[!grepl("^R/", blocks)])
-
-  # Review items without a box on the canvas: objects, rest items of blocks,
-  # functions no target runs, report sources of no factory target.
-  if (!is.null(qa$summary)) {
-    boxed <- unique(c(
-      vapply(targets, function(t) t$qa$item %||% NA_character_, character(1)),
-      vapply(targets, function(t) t$qa_file$item %||% NA_character_, character(1)),
-      paste0("function:", unlist(lapply(targets, `[[`, "fn"))),
-      vapply(maps, `[[`, character(1), "id")
-    ))
-    qa$summary$outside <- qa$outside(boxed)
-  }
 
   model <- list(
     project = basename(path),
@@ -114,30 +124,62 @@ read_pipeline <- function(path = ".", status = TRUE) {
     edges = lapply(seq_len(nrow(target_edges)), function(i) list(from = target_edges$from[i], to = target_edges$to[i])),
     blocks = blocks,
     maps = maps,
-    qa_summary = qa$summary,
+    qa_summary = NULL,
     files = read_source_files(targets)
   )
-  structure(model, class = "pipeworks_model")
+  attach_qa(structure(model, class = "pipeworks_model"), ".", items)
 }
 
-read_status <- function(target_names) {
+# (Re)attach the review status to `model`: `qa` of every target, function and
+# map, `qa_file` of factory targets, and `qa_summary`. Static and cheap, so the
+# live server calls it in-session whenever `qa/` or the code changes; the
+# structure of `model` is left alone. `items = NULL` means "no source model".
+attach_qa <- function(model, path, items) {
+  qa <- read_qa(path, items)
+  for (i in seq_along(model$targets)) {
+    t <- model$targets[[i]]
+    model$targets[[i]]["qa"] <- list(qa$item(target_item(t$name, t$map)))
+    # the report source of a factory target (`file:report.Rmd`) belongs to its box
+    model$targets[[i]]["qa_file"] <- list(if (!is.null(t$source)) qa$item(paste0("file:", t$source)))
+  }
+  for (i in seq_along(model$functions)) {
+    model$functions[[i]]["qa"] <- list(qa$item(paste0("function:", model$functions[[i]]$name)))
+  }
+  for (i in seq_along(model$maps)) model$maps[[i]]["qa"] <- list(qa$item(model$maps[[i]]$id))
+
+  # Review items without a box on the canvas: objects, rest items of blocks,
+  # functions no target runs, report sources of no factory target.
+  if (!is.null(qa$summary)) {
+    targets <- model$targets
+    boxed <- unique(c(
+      vapply(targets, function(t) t$qa$item %||% NA_character_, character(1)),
+      vapply(targets, function(t) t$qa_file$item %||% NA_character_, character(1)),
+      paste0("function:", unlist(lapply(targets, `[[`, "fn"))),
+      vapply(model$maps, `[[`, character(1), "id")
+    ))
+    qa$summary$outside <- qa$outside(boxed)
+  }
+  model["qa_summary"] <- list(qa$summary)
+  model
+}
+
+read_status <- function(target_names, info) {
+  if (!isTRUE(info$status)) return(stats::setNames(rep("unknown", length(target_names)), target_names))
   states <- stats::setNames(rep("new", length(target_names)), target_names)
-  if (!dir.exists(targets::tar_config_get("store"))) return(states)
-  progress <- tryCatch(targets::tar_progress(), error = function(e) NULL)
+  if (!isTRUE(info$store)) return(states)
+  progress <- info$progress
   if (!is.null(progress)) {
     known <- progress[progress$name %in% target_names, ]
     states[known$name] <- ifelse(known$progress == "errored", "errored", "uptodate")
   }
-  outdated <- tryCatch(targets::tar_outdated(), error = function(e) character())
-  outdated <- intersect(outdated, target_names)
+  outdated <- intersect(info$outdated, target_names)
   states[outdated] <- ifelse(states[outdated] == "errored", "errored", ifelse(states[outdated] == "new", "new", "outdated"))
   states
 }
 
 # Branch counts of dynamic targets that were built (named integer).
-read_branches <- function(target_names) {
-  if (!dir.exists(targets::tar_config_get("store"))) return(integer())
-  pb <- tryCatch(targets::tar_progress_branches(), error = function(e) NULL)
+read_branches <- function(target_names, info) {
+  pb <- info$branches
   if (is.null(pb) || !nrow(pb) || !"branches" %in% names(pb)) return(integer())
   pb <- pb[pb$name %in% target_names, , drop = FALSE]
   stats::setNames(as.integer(pb$branches), pb$name)
