@@ -372,12 +372,52 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 .qa-diff .d-gap { color: var(--muted); font-style: italic; }
 .qa-call { display: flex; gap: 6px; align-items: center; }
 .qa-call code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 4px 8px; border-radius: 6px; background: var(--code-bg); border: 1px solid var(--line); }
+
+/* Live review: verdict panel (modal) and compact verdict buttons (node toolbar) */
+.v-panel { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+.v-btns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.vbtn { height: 32px; border: 1.5px solid var(--line); border-radius: 8px; background: var(--panel); font-weight: 600; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vbtn.v-c { border-color: var(--s-ok); color: var(--s-ok); }
+.vbtn.v-q { border-color: var(--qa-doubt); color: var(--warn-fg); }
+.vbtn.v-w { border-color: var(--s-err); color: var(--s-err); }
+.vbtn:hover:not(:disabled) { background: var(--soft); }
+.vbtn:disabled { opacity: .45; cursor: default; }
+.v-cmt { min-height: 44px; }
+.v-warn { font-size: 12px; background: var(--warn-bg); color: var(--warn-fg); padding: 5px 9px; border-radius: 6px; }
+.v-block { font-size: 12px; background: var(--warn-bg); color: var(--warn-fg); padding: 6px 9px; border-radius: 6px; }
+.v-block ul { margin: 4px 0 0; padding-left: 18px; font-family: var(--f-mono); font-size: 11.5px; }
+.v-result { font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-height: 0; }
+.v-result:empty { display: none; }
+.v-result.ok { color: var(--s-ok); }
+.v-result.err { color: var(--s-err); }
+.v-result code { font-weight: 600; }
+.nodebar button.vb { min-width: 30px; padding: 0 8px; font-weight: 700; }
+.nodebar button.vb-c { color: var(--s-ok); }
+.nodebar button.vb-q { color: var(--warn-fg); }
+.nodebar button.vb-w { color: var(--s-err); }
+.nodebar button:disabled { opacity: .45; cursor: default; }
+.nodebar .nb-sep { width: 1px; margin: 3px 2px; background: var(--line); }
+
+/* Top bar: banners, sidebar toggle, theme; a hidden sidebar gives the canvas the full width */
+.banners { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; }
+.banner { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12.5px; padding: 7px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-fg); }
+.banner.err { background: color-mix(in srgb, var(--s-err) 14%, var(--panel)); color: var(--s-err); }
+.banner.info { background: var(--accent-soft); color: var(--fg); }
+.banner button { background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 5px; padding: 1px 8px; cursor: pointer; font-size: 12px; }
+.session.off::before { background: var(--s-err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-err) 25%, transparent); }
+.icon-btn { width: 32px; padding: 0; }
+.icon-btn svg { width: 16px; height: 16px; }
+.app.sb-off { grid-template-columns: minmax(0, 1fr); }
+.toolbar .seg { align-self: center; }
 /* Last rule on purpose: the artifact viewer adds this reset itself; a page written by pipeworks() needs its own. */
 [hidden][hidden] { display: none !important; } /* doubled: wins over single-class display rules even without !important */
 </style>
 
 <div class="app">
   <header class="topbar">
+    <button class="btn ghost icon-btn" id="btn-sidebar" aria-controls="sidebar" aria-expanded="true" title="Hide the sidebar" aria-label="Hide the sidebar">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 3v10" stroke="currentColor" stroke-width="1.4"/></svg>
+    </button>
     <div class="brand">
       <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
         <rect x="1" y="3" width="8" height="8" rx="2" fill="var(--g1)"/>
@@ -391,13 +431,19 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
     <span class="qa-bar" id="qa-bar" hidden></span>
     <div class="spacer"></div>
     <div class="toolbar">
+      <div class="seg" role="group" aria-label="Mode">
+        <button id="mode-review" aria-pressed="false" title="Review: structure read-only, record verdicts">Review</button>
+        <button id="mode-build" aria-pressed="false" title="Build: change the pipeline in this view">Build</button>
+      </div>
       <button class="btn primary" id="btn-add" title="Add a target (N)">+ Add target</button>
       <button class="btn" id="btn-layout" title="Arrange by stage and block (L)">Auto-layout</button>
       <button class="btn" id="btn-undo" title="Undo (Ctrl/Cmd+Z)">Undo</button>
+      <button class="btn ghost" id="btn-theme" title="Theme: follows the system. Click for light.">◐ System</button>
     </div>
+    <div class="banners" id="banners" role="status" hidden></div>
   </header>
 
-  <aside class="panel sidebar" aria-label="Pipeline overview">
+  <aside class="panel sidebar" id="sidebar" aria-label="Pipeline overview">
     <div class="sb-section">
       <p class="eyebrow">Pipeline</p>
       <div class="stats" id="stats"></div>
@@ -440,9 +486,9 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
         <span><i style="border:2px solid var(--s-err);border-radius:3px"></i>Wrong</span>
         <span><i style="border:1px solid var(--line);border-radius:3px;opacity:.5"></i>Reviewed</span>
       </div>
-      <p class="help">Record verdicts with <code>pipeworks::qa_review()</code>; the dialog of a target shows the call.</p>
+      <p class="help" id="qa-help">Record verdicts with <code>pipeworks::qa_review()</code>; the dialog of a target shows the call.</p>
     </div>
-    <div class="sb-section">
+    <div class="sb-section" id="reset-section">
       <button class="btn small" id="btn-reset">Discard changes</button>
     </div>
   </aside>
@@ -457,12 +503,16 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
           <button data-act="edit">Edit</button>
           <button data-act="rstudio" class="rs">Open in RStudio</button>
           <button data-act="remove" class="rm">Remove</button>
+          <span class="nb-sep" id="nb-sep" hidden></span>
+          <button data-verdict="correct" class="vb vb-c" hidden aria-label="Correct">✓</button>
+          <button data-verdict="questionable" class="vb vb-q" hidden aria-label="Questionable">?</button>
+          <button data-verdict="wrong" class="vb vb-w" hidden aria-label="Wrong">✗</button>
         </div>
       </div>
-      <div class="canvas-empty" id="canvas-empty" hidden><p>No targets yet.<br>Double-click here or use “Add target”.</p></div>
+      <div class="canvas-empty" id="canvas-empty" hidden><p>No targets yet.<span id="empty-add"><br>Double-click here or use “Add target”.</span></p></div>
       <div class="canvas-hint">
-        <span><b>Double-click</b> a target to edit it</span>
-        <span><b>Drag ●</b> onto a target to plug it in</span>
+        <span><b>Double-click</b> a target to <span id="hint-dbl">edit</span> it</span>
+        <span id="hint-plug"><b>Drag ●</b> onto a target to plug it in</span>
         <span><b>Click a map pill</b> to unfold its variants</span>
       </div>
       <div class="zoombar">
@@ -530,12 +580,22 @@ function fromModel(D) {
   });
   return { targets, fns, edges: arr(D.edges).map(e => ({ from: e.from, to: e.to })), sel: null };
 }
-const FILES = Object.fromEntries(arr(RAW.files).map(f => [f.path, f.text]));
-const MAPS = Object.fromEntries(arr(RAW.maps).map(m => [m.id, { ...m, templates: arr(m.templates), variants: arr(m.variants), color: ((m.color_index || 1) - 1) % 6 + 1 }]));
-const QA = RAW.qa_summary || null;
-/* review items without a box on the canvas (objects, rests of blocks, helper functions, report sources) */
-const OUTSIDE = arr(QA && QA.outside);
-const OUTSIDE_OPEN = OUTSIDE.filter(o => !o.passing);
+/* Everything derived from the model; the live page swaps the model when R sends a new version. */
+let FILES, MAPS, QA, OUTSIDE, OUTSIDE_OPEN, LIVE, MODEL_ERROR;
+function setModel(raw) {
+  RAW = raw;
+  FILES = Object.fromEntries(arr(RAW.files).map(f => [f.path, f.text]));
+  MAPS = Object.fromEntries(arr(RAW.maps).map(m => [m.id, { ...m, templates: arr(m.templates), variants: arr(m.variants), color: ((m.color_index || 1) - 1) % 6 + 1 }]));
+  QA = RAW.qa_summary || null;
+  /* review items without a box on the canvas (objects, rests of blocks, helper functions, report sources) */
+  OUTSIDE = arr(QA && QA.outside);
+  OUTSIDE_OPEN = OUTSIDE.filter(o => !o.passing);
+  LIVE = RAW.live || null;
+  MODEL_ERROR = RAW.model_error || null;
+}
+setModel(RAW);
+/* Live page: served by pipeworks(), which embeds `live`; the static page (pipeworks_html(), demo) has none. */
+const IS_LIVE = !!LIVE;
 let S = fromModel(RAW);
 const unfolded = new Set();   // map ids shown as single variants (view state, not undone)
 const SP = {};                // positions of folded map cards, by view id
@@ -547,6 +607,7 @@ const snap = () => JSON.stringify({ targets: S.targets, fns: S.fns, edges: S.edg
 function push(s = snap()) { if (undoStack[undoStack.length - 1] !== s) undoStack.push(s); if (undoStack.length > 100) undoStack.shift(); updateDirty(); }
 function updateDirty() { $('#btn-undo').disabled = !undoStack.length; $('#dirty').hidden = !undoStack.length; }
 function undo() {
+  if (REVIEW()) return toast(BUILD_ONLY);
   const s = undoStack.pop(); if (!s) return toast('Nothing to undo.');
   Object.assign(S, JSON.parse(s));
   VG = null;
@@ -642,6 +703,17 @@ const QA_LABEL = { unreviewed: 'unreviewed', changed: 'changed', check_again: 'c
 /* questionable passes qa_check() (counts as done) but deserves a look: amber, not red */
 const qaGroup = st => st === 'wrong' ? 'bad' : st === 'questionable' ? 'doubt' : st === 'changed' || st === 'unreviewed' ? 'todo' : st === 'check_again' ? 'again' : 'ok';
 let qaOn = !!QA;
+/* Review: structure read-only, verdicts. Build: editing in this view, no verdicts. */
+let mode = IS_LIVE ? (LIVE.mode === 'build' ? 'build' : 'review') : (QA && QA.open > 0 ? 'review' : 'build');
+let serverMode = IS_LIVE ? LIVE.mode : null;
+const REVIEW = () => mode === 'review';
+const BUILD_ONLY = 'Switch to Build mode to change the pipeline.';
+/* The review record a quick verdict on a canvas node is for: its worst item that does not pass yet, else its worst item. */
+function primaryRecord(did) {
+  const recs = qaRecords(did); if (!recs.length) return null;
+  const open = recs.filter(q => !q.passing), pool = open.length ? open : recs;
+  return pool.reduce((a, q) => (QA_RANK[q.status] ?? 9) < (QA_RANK[a.status] ?? 9) ? q : a);
+}
 /* Review records behind a view node: its targets (variants share their template's item), their functions, and the map of a card. */
 function qaRecords(did) {
   const n = vnode(did); if (!n) return [];
@@ -708,13 +780,26 @@ function srcLoc(id) {
   return FILES['_targets.R'] != null ? { file: '_targets.R', line: 1, from: 1, to: 1 } : null;
 }
 function fnLoc(name) { const f = S.fns[name]; return f && { file: f.file, line: f.line, from: f.doc_line, to: f.end_line }; }
-function openInRStudio(loc) {
-  if (!loc) return;
+/* The review item whose source "Open in RStudio" shows for a target: its function, its report source, or the target itself. */
+const itemOf = id => { const t = S.targets[id]; return t ? (fnOf(id)?.qa?.item || t.qa_file?.item || t.qa?.item || null) : null; };
+function showInDrawer(loc) {
+  if (!loc || FILES[loc.file] == null) return;
   drawerTab = loc.file; hitLines = [loc.from, loc.to];
   drawer.classList.add('open'); renderCode();
   const first = $('#code').children[loc.from - 1];
   if (first) setTimeout(() => { const b = $('#drawer-body'); if (b.scrollTo) b.scrollTo({ top: first.offsetTop - 30, behavior: REDUCED ? 'auto' : 'smooth' }); }, 220);
-  toast(`With the live connection this calls rstudioapi::navigateToFile("${loc.file}", line = ${loc.line}).`);
+}
+/* Live: R opens the file (it only knows review items, never arbitrary paths). Static: show the code here. */
+function openInRStudio(loc, item) {
+  if (IS_LIVE && item) {
+    api('open', { item })
+      .then(r => { if (r && r.ok) toast(`Opened ${loc ? `${loc.file}:${loc.line}` : item} in RStudio.`); else { toast((r && r.error) || 'R could not open the file.'); showInDrawer(loc); } })
+      .catch(e => { toast(connText(e)); showInDrawer(loc); });
+    return;
+  }
+  if (!loc) return;
+  showInDrawer(loc);
+  toast(IS_LIVE ? `${loc.file}:${loc.line} has no review item, so R cannot open it from here.` : `With the live connection this calls rstudioapi::navigateToFile("${loc.file}", line = ${loc.line}).`);
 }
 
 /* ---------- Mutations (kept in this view) ---------- */
@@ -752,6 +837,7 @@ function unplugFrom(t, f, from, depsList) {
   return '';
 }
 function connect(from, to) {
+  if (REVIEW()) return toast(BUILD_ONLY);
   const why = canConnect(from, to); if (why) return toast(why);
   push();
   const t = S.targets[to], f = fnOf(to), list = [];
@@ -761,6 +847,7 @@ function connect(from, to) {
   toast(added ? `Added argument ${nm(from)} to ${f.name}()${usedBy(f.name).length > 1 ? ` with default NULL, because ${usedBy(f.name).length - 1} other target(s) share it` : ''}.` : `${nm(to)} now passes ${nm(from)} to ${f.name}().`, true);
 }
 function unplug(from, to) {
+  if (REVIEW()) return toast(BUILD_ONLY);
   const t = S.targets[to];
   if (t.mode !== 'function') return toast(t.mode === 'factory' ? `Remove tar_read(${nm(from)}) from ${t.source} to unplug it.` : `Remove ${nm(from)} from the command of ${nm(to)} to unplug it.`);
   const before = snap(), list = deps(to);
@@ -773,6 +860,7 @@ function unplug(from, to) {
 }
 function uniqueName(base, taken) { if (!taken.has(base)) return base; let i = 2; while (taken.has(`${base}_${i}`)) i++; return `${base}_${i}`; }
 function addTarget(x, y, from) {
+  if (REVIEW()) return toast(BUILD_ONLY);
   const before = snap();
   const name = uniqueName(from ? `${nm(from)}_next` : 'new_target', new Set(Object.values(S.targets).map(t => t.name)));
   let id = name; while (S.targets[id]) id += '_';
@@ -789,6 +877,7 @@ function addTarget(x, y, from) {
   openModal(id, { isNew: true, before });
 }
 function removeTarget(id) {
+  if (REVIEW()) return toast(BUILD_ONLY);
   push();
   const name = nm(id);
   downs(id).forEach(d => { const t = S.targets[d]; t.args = t.args.filter(a => !(a.kind === 'target' && a.refs[0] === id)); invalidate(d); });
@@ -931,8 +1020,8 @@ function renderNodes() {
     const tag = q && q.tag ? `<span class="qa-tag${q.group === 'bad' || q.group === 'doubt' ? ' ' + q.group : ''}" title="Review status: ${esc(QA_LABEL[q.status] || q.status)}${q.self ? ' (self-reviewed)' : ''}">${esc(q.tag)}</span>` : '';
     return `<div class="${cls}" data-id="${esc(id)}" style="transform:translate(${pos.x}px,${pos.y}px)">
       ${tag}${pill}
-      <span class="port port-in" title="Inputs plug in here"></span>
-      <span class="port port-out" data-port="${esc(id)}" title="Drag to plug ${esc(n.stack ? n.map.template : t.name)} into another target"></span>
+      ${REVIEW() ? "" : `<span class="port port-in" title="Inputs plug in here"></span>
+      <span class="port port-out" data-port="${esc(id)}" title="Drag to plug ${esc(n.stack ? n.map.template : t.name)} into another target"></span>`}
       <div class="n-top"><span class="n-name">${esc(n.stack ? n.map.template : t.name)}</span><span class="n-status" title="${STATUS[status] || status}"></span></div>
       <div class="n-call">${esc(n.stack ? cardCall(n) : callText(t))}</div>
       <div class="n-title${title ? '' : ' empty'}">${esc(title || 'No roxygen title yet')}</div>
@@ -958,7 +1047,17 @@ function renderNodebar() {
   const pos = P(id), rep = n.members[0];
   nodebar.style.transform = `translate(${pos.x}px, ${pos.y - 40}px)`;
   nodebar.querySelector('[data-act="rstudio"]').hidden = !srcLoc(rep) || (fnOf(rep)?.isNew);
-  nodebar.querySelector('[data-act="remove"]').hidden = n.stack;
+  nodebar.querySelector('[data-act="remove"]').hidden = n.stack || REVIEW();
+  nodebar.querySelector('[data-act="edit"]').textContent = REVIEW() ? 'Details' : 'Edit';
+  /* quick verdicts: live page in Review mode only (the static page shows the qa_review() call in the dialog) */
+  const q = IS_LIVE && REVIEW() ? primaryRecord(id) : null;
+  $('#nb-sep').hidden = !q;
+  nodebar.querySelectorAll('[data-verdict]').forEach(b => {
+    b.hidden = !q; if (!q) return;
+    b.disabled = !LIVE.can_record;
+    const what = b.dataset.verdict === 'correct' ? `Mark ${q.item} as correct` : `Mark ${q.item} as ${b.dataset.verdict} (asks for a comment)`;
+    b.title = LIVE.can_record ? what : `${LIVE.blocked_reason || 'Commit your changes first.'} ${arr(LIVE.blockers).join(', ')}`.trim();
+  });
 }
 function renderPositions() {
   nodesEl.querySelectorAll('.node').forEach(el => { const t = P(el.dataset.id); el.style.transform = `translate(${t.x}px,${t.y}px)`; });
@@ -982,7 +1081,7 @@ function renderEdges() {
     const tip = e.real.length > 1 ? `${e.real.length} links: ${e.real.map(x => `${nm(x.from)} → ${nm(x.to)}`).join(', ')}`
       : `${nm(r0.from)} → ${nm(r0.to)}${arg ? ` (argument ${arg.name} of ${S.targets[r0.to].fn}())` : ''}`;
     html += `<g class="edge-g${sel ? ' sel' : ''}${cls}"><path class="edge" d="${d}"/><path class="edge-hit" d="${d}" data-edge="${esc(eid)}"><title>${esc(tip)}</title></path>`;
-    if (sel) {
+    if (sel && !REVIEW()) {
       const mx = (g.x1 + 3 * g.c1x + 3 * g.c2x + g.x2) / 8, my = (g.y1 + g.y2) / 2;
       html += `<g class="edge-del" data-del="${esc(eid)}" transform="translate(${mx},${my})"><circle r="10"/><path d="M-4,-4 L4,4 M4,-4 L-4,4"/><title>Unplug ${esc(nm(r0.from))} from ${esc(nm(r0.to))}</title></g>`;
     }
@@ -1102,6 +1201,7 @@ function closeModal(saved) {
   if (!saved && M.isNew) { Object.assign(S, JSON.parse(M.before)); S.sel = null; renderAll(); }
   overlay.hidden = true; modal.innerHTML = ''; const lf = M.lastFocus; M = null;
   if (lf && lf.focus && document.contains(lf)) lf.focus();
+  if (PENDING) applyPending();
 }
 function argSource(t, formal) {
   const a = t.args.find(x => x.name === formal.name);
@@ -1113,12 +1213,16 @@ function argSource(t, formal) {
 function renderModal() {
   const t = M.t, f = M.f, loc = srcLoc(M.id), mp = mapOf(M.id), m = mp && MAPS[mp.id];
   // a folded card stands for all variants: only function-level edits (which apply to all of them) are allowed
-  const locked = M.locked = folded(M.id), ro = locked ? ' readonly title="Unfold the map to change single variants"' : '', dis = locked ? ' disabled title="Unfold the map to change single variants"' : '';
+  // Review mode: the structure is read-only; code changes happen in RStudio and come back with the refresh
+  const rv = REVIEW(), RVT = 'Read-only in Review mode: switch to Build to change it';
+  const locked = M.locked = folded(M.id), LKT = 'Unfold the map to change single variants';
+  const ro = rv ? ` readonly title="${RVT}"` : locked ? ` readonly title="${LKT}"` : '', dis = rv ? ` disabled title="${RVT}"` : locked ? ` disabled title="${LKT}"` : '';
+  const fro = rv ? ` readonly title="${RVT}"` : '';
   const others = f ? usedBy(f.name).filter(x => x !== M.id) : [];
   const famList = [...new Set(Object.values(S.fns).map(x => x.family).filter(Boolean))];
   const mapNote = m ? `<div class="notice mc-${m.color}"><code>${esc(t.name)}</code> is variant <code>${esc(mp.variant || '(none)')}</code> of template <code>${esc(mp.template)}</code> in <code>tar_map()</code> over <code>${esc(m.param || 'values')}</code> = ${m.variants.map(v => `<code>${esc(v)}</code>`).join(', ')}. ${locked ? '<br><b id="m-locked">Unfold the map to change single variants.</b> Its card stands for all of them; documentation and body of the function apply to every variant anyway.' : ''}</div>` : '';
   const cands = ids().filter(c => c !== M.id && !M.deps.includes(c) && !reaches(M.id, c));
-  const depList = `<div class="deps">${M.deps.map(d => `<span class="dep">${esc(nm(d))}${t.mode === 'function' && !locked ? `<button data-unplug="${esc(d)}" title="Unplug ${esc(nm(d))}" aria-label="Unplug ${esc(nm(d))}">✕</button>` : ''}</span>`).join('') || '<span class="help">None</span>'}</div>`;
+  const depList = `<div class="deps">${M.deps.map(d => `<span class="dep">${esc(nm(d))}${t.mode === 'function' && !locked && !rv ? `<button data-unplug="${esc(d)}" title="Unplug ${esc(nm(d))}" aria-label="Unplug ${esc(nm(d))}">✕</button>` : ''}</span>`).join('') || '<span class="help">None</span>'}</div>`;
   modal.innerHTML = `
     <header class="m-head status-${t.status}${m ? ` mc-${m.color}` : ''}" style="--gc:var(--mc, var(--accent))">
       <div class="m-row">
@@ -1136,19 +1240,19 @@ function renderModal() {
         <h3>Documentation <small>roxygen block of <code>${esc(f.name)}()</code></small></h3>
         ${others.length ? `<div class="notice"><code>${esc(f.name)}()</code> is also used by ${others.map(o => `<code>${esc(nm(o))}</code>`).join(', ')}. Documentation and body changes apply to all of them.</div>` : ''}
         <div class="field"><label for="m-title">Title <code>#' first line</code></label>
-          <input class="inp" id="m-title" data-ff="title" value="${esc(f.title)}" placeholder="e.g. Clean and deduplicate responses"></div>
+          <input class="inp" id="m-title" data-ff="title" value="${esc(f.title)}" placeholder="e.g. Clean and deduplicate responses"${fro}></div>
         <div class="field"><label for="m-desc">Description</label>
-          <textarea class="txt" id="m-desc" data-ff="description" rows="3" placeholder="Why this step exists and what it changes">${esc(f.description)}</textarea></div>
+          <textarea class="txt" id="m-desc" data-ff="description" rows="3" placeholder="Why this step exists and what it changes"${fro}>${esc(f.description)}</textarea></div>
         <div class="field"><span class="lbl">Arguments <code>@param</code></span>
           ${f.formals.length ? f.formals.map(x => `<div class="argrow"><span class="pn">${esc(x.name)}</span>
             <div class="src">${argSource(t, x)}</div>
-            <textarea class="txt" rows="1" data-p="${esc(x.name)}" aria-label="Describe argument ${esc(x.name)}" placeholder="What is ${esc(x.name)}?">${esc(f.params[x.name] || '')}</textarea></div>`).join('') : '<p class="help">No arguments. Plug in an input to add one.</p>'}
+            <textarea class="txt" rows="1" data-p="${esc(x.name)}" aria-label="Describe argument ${esc(x.name)}" placeholder="What is ${esc(x.name)}?"${fro}>${esc(f.params[x.name] || '')}</textarea></div>`).join('') : '<p class="help">No arguments. Plug in an input to add one.</p>'}
         </div>
         <div class="field"><label for="m-returns">Returns <code>@return</code></label>
-          <textarea class="txt" id="m-returns" data-ff="returns" rows="2" placeholder="e.g. A tibble of valid, unique responses.">${esc(f.returns)}</textarea></div>
+          <textarea class="txt" id="m-returns" data-ff="returns" rows="2" placeholder="e.g. A tibble of valid, unique responses."${fro}>${esc(f.returns)}</textarea></div>
         <div class="grid2">
           <div class="field"><label for="m-family">Family <code>@family</code></label>
-            <input class="inp" id="m-family" data-ff="family" list="fam-list" value="${esc(f.family)}" placeholder="e.g. Data import" autocomplete="off">
+            <input class="inp" id="m-family" data-ff="family" list="fam-list" value="${esc(f.family)}" placeholder="e.g. Data import" autocomplete="off"${fro}>
             <datalist id="fam-list">${famList.map(x => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
           <div class="field"><label for="m-file">Source file</label>
             <input class="inp mono" id="m-file" data-ff="file" value="${esc(f.file)}" spellcheck="false" autocomplete="off" ${f.isNew ? '' : 'readonly title="Moving functions between files is not supported yet"'}></div>
@@ -1160,12 +1264,12 @@ function renderModal() {
       </div>
       <div class="m-col">${f ? `
         <h3>Function</h3>
-        <div class="field"><label for="m-fn">Function name</label><input class="inp mono" id="m-fn" data-ff="name" value="${esc(f.name)}" spellcheck="false" autocomplete="off"></div>
+        <div class="field"><label for="m-fn">Function name</label><input class="inp mono" id="m-fn" data-ff="name" value="${esc(f.name)}" spellcheck="false" autocomplete="off"${fro}></div>
         <div><div class="sig" id="m-sig"></div>
-          <textarea class="txt body-txt" id="m-body" data-ff="body" rows="${Math.max(5, f.body.split('\n').length + 1)}" spellcheck="false" aria-label="Function body">${esc(f.body)}</textarea>
+          <textarea class="txt body-txt" id="m-body" data-ff="body" rows="${Math.max(5, f.body.split('\n').length + 1)}" spellcheck="false" aria-label="Function body"${fro}>${esc(f.body)}</textarea>
           <div class="sig end">}</div></div>
         <div class="field"><span class="lbl">Inputs of ${esc(t.name)}</span>${depList}
-          ${cands.length && !locked ? `<select class="select" id="m-plug" aria-label="Plug in an input"><option value="">+ Plug in an input…</option>${cands.map(c => `<option value="${esc(c)}">${esc(nm(c))}</option>`).join('')}</select>` : ''}</div>` : `
+          ${cands.length && !locked && !rv ? `<select class="select" id="m-plug" aria-label="Plug in an input"><option value="">+ Plug in an input…</option>${cands.map(c => `<option value="${esc(c)}">${esc(nm(c))}</option>`).join('')}</select>` : ''}</div>` : `
         <h3>Command</h3>
         <pre class="plain">${hl(t.command || '')}</pre>
         <div class="field"><span class="lbl">Inputs</span>${depList}</div>`}
@@ -1178,11 +1282,11 @@ function renderModal() {
       </div>
     </div>
     <footer class="m-foot">
-      ${M.isNew || locked ? '' : '<button class="btn danger" data-m="remove">Remove target</button>'}
+      ${M.isNew || locked || rv ? '' : '<button class="btn danger" data-m="remove">Remove target</button>'}
       <span class="spacer"></span>
-      <span class="help hide-narrow">Writing to files comes with the live connection</span>
-      <button class="btn" data-m="cancel">Cancel</button>
-      <button class="btn primary" data-m="save">Apply</button>
+      <span class="help hide-narrow">${rv ? 'Review mode: change code in RStudio; this view refreshes' : 'Writing to files comes with the live connection'}</span>
+      <button class="btn" data-m="cancel">${rv ? 'Close' : 'Cancel'}</button>
+      ${rv ? '' : '<button class="btn primary" data-m="save">Apply</button>'}
     </footer>`;
   refreshModal();
   modal.querySelectorAll('textarea[data-p]').forEach(autoGrow);
@@ -1204,10 +1308,31 @@ function qaSection(id) {
         ${q.last_author ? `<span class="help">last changed by ${esc(q.last_author)}</span>` : ''}</div>
       ${diffHtml(q)}
       ${hist.length ? `<ul class="qa-hist">${hist.slice(0, 4).map(h => `<li class="${h.current ? '' : 'old'}"><b>${esc(h.verdict)}</b> · ${esc(h.reviewer || '?')} · ${fmtDate(h.date)}${h.current ? '' : ' · <i>for an older version</i>'}${h.comment ? ` · <q>${esc(h.comment)}</q>` : ''}</li>`).join('')}${hist.length > 4 ? `<li>${hist.length - 4} older entries</li>` : ''}</ul>` : '<span class="help">No verdict yet.</span>'}
-      ${(() => { const call = `pipeworks::qa_review("${q.item}", "correct")`; return `<div class="qa-call"><code>${esc(call)}</code><button class="btn small" data-copy="${esc(call)}">Copy</button></div>`; })()}
+      ${verdictUi(q)}
     </div>`;
   }).join('');
-  return `<section class="qa-sec" id="m-qa"><h3>Review <small>read-only · record verdicts with <code>qa_review()</code></small></h3>${items}</section>`;
+  const sub = !REVIEW() ? 'read-only in Build mode · switch to Review to record a verdict' : IS_LIVE ? 'record a verdict: it is saved under <code>qa/reviews/</code> and committed' : 'read-only · record verdicts with <code>qa_review()</code>';
+  return `<section class="qa-sec" id="m-qa"><h3>Review <small>${sub}</small></h3>${items}</section>`;
+}
+/* Verdict state per item, kept across re-renders (refresh, mode switch): comment draft, result line, busy flag. */
+const VSTATE = {};
+const vst = item => (VSTATE[item] ||= { draft: '', result: null, busy: false });
+const sameName = (a, b) => !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+/* Review mode only. Live: the buttons (approved review-view sketch). Static: the qa_review() call to copy. */
+function verdictUi(q) {
+  if (!REVIEW()) return '';
+  if (!IS_LIVE) { const call = `pipeworks::qa_review("${q.item}", "correct")`; return `<div class="qa-call"><code>${esc(call)}</code><button class="btn small" data-copy="${esc(call)}">Copy</button></div>`; }
+  const st = vst(q.item), off = !LIVE.can_record || st.busy;
+  const self = sameName(q.last_author, LIVE.user)
+    ? '<div class="v-warn">You last changed this; your verdict will be flagged as self-review and does not pass <code>qa_check()</code>.</div>' : '';
+  const blocked = LIVE.can_record ? '' : `<div class="v-block"><b>${esc(LIVE.blocked_reason || 'Commit your changes first.')}</b>${arr(LIVE.blockers).length ? `<ul>${arr(LIVE.blockers).map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}</div>`;
+  const r = st.result;
+  const result = r ? `${esc(r.text)}${r.commit ? ` <code>${esc(r.commit)}</code>` : ''}${r.retry ? ' <button class="btn small" data-vretry="1">Retry commit</button>' : ''}` : '';
+  const btn = (v, cls, label) => `<button class="vbtn ${cls}" data-verdict="${v}"${off ? ' disabled' : ''}>${label}</button>`;
+  return `<div class="v-panel" data-vitem="${esc(q.item)}">${self}
+    <div class="v-btns" role="group" aria-label="Verdict for ${esc(q.item)}">${btn('correct', 'v-c', '✓ Correct')}${btn('questionable', 'v-q', '? Questionable')}${btn('wrong', 'v-w', '✗ Wrong')}</div>
+    <textarea class="txt v-cmt" data-vcmt="${esc(q.item)}" rows="2" aria-label="Comment on ${esc(q.item)}" placeholder="Comment (required for questionable / wrong)"${!LIVE.can_record ? ' disabled' : ''}>${esc(st.draft)}</textarea>
+    ${blocked}<div class="v-result${r && r.cls ? ' ' + r.cls : ''}" role="status">${result}</div></div>`;
 }
 /* Line diff (LCS) of an item against base; unchanged runs longer than 2*CTX lines are cut to their context. */
 function lineDiff(a, b) {
@@ -1253,6 +1378,7 @@ function nameError(v, kind, selfName) {
   return '';
 }
 function saveModal() {
+  if (REVIEW()) return;
   const t = M.t, f = M.f, orig = fnOf(M.id);
   const err = nameError(t.name.trim(), 'target') || (f ? nameError(f.name.trim(), 'function', orig.name) : '');
   const box = $('#m-err'); box.hidden = !err; box.textContent = err;
@@ -1284,6 +1410,7 @@ function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHei
 
 modal.addEventListener('input', e => {
   const el = e.target;
+  if (el.dataset.vcmt != null) { vst(el.dataset.vcmt).draft = el.value; return; }
   if (el.dataset.p) { M.f.params[el.dataset.p] = el.value; autoGrow(el); return refreshModal(); }
   if (el.dataset.ff) {
     M.f[el.dataset.ff] = el.value;
@@ -1310,16 +1437,18 @@ modal.addEventListener('click', e => {
   if (b.dataset.unplug) { const why = unplugFrom(M.t, M.f, b.dataset.unplug, M.deps); if (why) toast(why); return renderModal(); }
   if (b.dataset.goto) { const id = b.dataset.goto; closeModal(false); goto(id); return; }
   if (b.dataset.copy) return copyText(b.dataset.copy, 'Copied. Run it in the R console of the project.');
+  if (b.dataset.verdict) { const p = b.closest('[data-vitem]'); if (p) sendVerdict(p.dataset.vitem, b.dataset.verdict); return; }
+  if (b.dataset.vretry) return retryCommit(b.closest('[data-vitem]')?.dataset.vitem);
   const a = b.dataset.m;
   if (a === 'cancel') closeModal(false);
   else if (a === 'save') saveModal();
   else if (a === 'remove') { if (M.locked) return toast(UNFOLD); const id = M.id; closeModal(true); removeTarget(id); }
-  else if (a === 'rstudio') { const loc = srcLoc(M.id); closeModal(false); openInRStudio(loc); }
+  else if (a === 'rstudio') { const id = M.id, loc = srcLoc(id); closeModal(false); openInRStudio(loc, itemOf(id)); }
 });
 overlay.addEventListener('pointerdown', e => { if (e.target === overlay) closeModal(false); });
 
 /* ---------- Render all ---------- */
-function renderAll() { VG = null; renderNodes(); renderEdges(); renderSidebar(); renderCode(); renderQaBar(); }
+function renderAll() { VG = null; renderChrome(); renderNodes(); renderEdges(); renderSidebar(); renderCode(); renderQaBar(); renderSession(); renderBanners(); }
 function renderQaBar() {
   const bar = $('#qa-bar'); bar.hidden = !QA;
   canvas.classList.toggle('qa-on', !!QA && qaOn);
@@ -1338,9 +1467,9 @@ function renderQaBar() {
 }
 
 document.querySelector('.sidebar').addEventListener('click', e => {
-  const h = e.target.closest('[data-fnloc]'); if (h) return openInRStudio(fnLoc(h.dataset.fnloc));
+  const h = e.target.closest('[data-fnloc]'); if (h) return openInRStudio(fnLoc(h.dataset.fnloc), S.fns[h.dataset.fnloc]?.qa?.item);
   const ql = e.target.closest('[data-qaloc]');
-  if (ql) { const o = OUTSIDE.find(x => x.item === ql.dataset.qaloc); return o && openInRStudio({ file: o.file, line: o.line1, from: o.line1, to: o.line2 }); }
+  if (ql) { const o = OUTSIDE.find(x => x.item === ql.dataset.qaloc); return o && openInRStudio({ file: o.file, line: o.line1, from: o.line1, to: o.line2 }, o.item); }
   const mp = e.target.closest('[data-map]'); if (mp) return toggleMap(mp.dataset.map);
   const b = e.target.closest('[data-goto]'); if (!b) return;
   goto(b.dataset.goto);
@@ -1438,7 +1567,8 @@ canvas.addEventListener('dblclick', e => {
 nodebar.addEventListener('click', e => {
   const b = e.target.closest('button'), id = S.sel?.id; if (!b || !id) return;
   if (b.dataset.act === 'edit') openModal(repOf(id));
-  else if (b.dataset.act === 'rstudio') openInRStudio(srcLoc(repOf(id)));
+  else if (b.dataset.act === 'rstudio') openInRStudio(srcLoc(repOf(id)), itemOf(repOf(id)));
+  else if (b.dataset.verdict) quickVerdict(id, b.dataset.verdict);
   else if (b.dataset.act === 'remove') removeNode(id);
 });
 function zoomAt(f, cx, cy) {
@@ -1504,13 +1634,255 @@ function toast(msg, withUndo) {
   el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 4600);
 }
 
+/* ---------- Live connection to R (pipeworks()) ----------
+   Relative api/ URLs only (the page may sit behind the RStudio Server proxy); every call sends the token. */
+let TOKEN = null;
+if (IS_LIVE) {
+  try {
+    const tk = new URLSearchParams(location.search).get('token');
+    if (tk) {
+      TOKEN = tk;
+      try { sessionStorage.setItem('pipeworks-token', tk); } catch { /* storage blocked: the token lives in memory only */ }
+      history.replaceState(null, '', location.pathname);
+    }
+  } catch { /* no history API: the token stays in the address bar */ }
+  if (!TOKEN) try { TOKEN = sessionStorage.getItem('pipeworks-token'); } catch { TOKEN = null; }
+}
+const apiFail = (kind, message, status) => Object.assign(new Error(message || kind), { kind, status });
+async function api(path, body) {
+  const post = body !== undefined;
+  let res;
+  try {
+    res = await fetch('api/' + path, {
+      method: post ? 'POST' : 'GET', cache: 'no-store', credentials: 'same-origin',
+      headers: post ? { 'X-Pipeworks-Token': TOKEN || '', 'Content-Type': 'application/json' } : { 'X-Pipeworks-Token': TOKEN || '' },
+      body: post ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) { throw apiFail('lost', e && e.message); }
+  const type = (res.headers && res.headers.get('content-type')) || '';
+  // host/origin refusals are text/plain 403s that name what to allow
+  if (!/json/i.test(type)) { const text = (await res.text()).trim(); throw apiFail(res.status === 403 ? 'refused' : 'http', text || `HTTP ${res.status}`, res.status); }
+  let data;
+  try { data = await res.json(); } catch { throw apiFail('http', `R sent an unreadable answer (HTTP ${res.status}).`, res.status); }
+  // a JSON 403 means a wrong token: the server was restarted
+  if (!res.ok) throw apiFail(res.status === 403 ? 'lost' : 'http', (data && data.error) || `HTTP ${res.status}`, res.status);
+  return data;
+}
+const LOST = 'Connection to R lost: run pipeworks() again.';
+const connText = e => e.kind === 'refused' ? `Connection refused by R: ${e.message}` : e.kind === 'lost' ? LOST : e.message;
+let CONN = null;           // the last failed poll, null while R answers
+let PENDING = null;        // a newer model held back while this view has unsaved edits
+let refreshedAt = null;
+function setConn(e) { const was = CONN && connText(CONN); CONN = e; if ((CONN && connText(CONN)) !== was) { renderBanners(); renderSession(); } }
+
+/* Poll api/version with a setTimeout chain (a slow answer never stacks requests); pause while the tab is hidden. */
+const POLL_MS = 2000;
+let pollTimer = null, polling = false, refreshing = null;
+function schedulePoll() {
+  clearTimeout(pollTimer); pollTimer = null;
+  if (document.visibilityState !== 'hidden') pollTimer = setTimeout(poll, POLL_MS);
+}
+async function poll() {
+  pollTimer = null;
+  if (polling) return;
+  polling = true;
+  try { const v = await api('version'); setConn(null); if (v.version !== LIVE.version) await refresh(); }
+  catch (e) { setConn(e); }
+  finally { polling = false; schedulePoll(); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!IS_LIVE) return;
+  if (document.visibilityState === 'hidden') { clearTimeout(pollTimer); pollTimer = null; }
+  else if (!polling) poll();
+});
+const refresh = () => (refreshing ||= fetchModel().finally(() => { refreshing = null; }));
+/* After a verdict: make sure the view shows at least `version`. */
+async function syncTo(version) {
+  try { if (refreshing) await refreshing; if (version == null || version !== LIVE.version) await refresh(); setConn(null); }
+  catch (e) { setConn(e); }
+}
+async function fetchModel() {
+  const m = await api('model');
+  if (!m || !m.targets || !m.live) throw apiFail('http', 'R sent a model without targets.');
+  refreshedAt = new Date();
+  if (m.live.mode !== serverMode) { serverMode = m.live.mode; if (m.live.mode === 'review' || m.live.mode === 'build') mode = m.live.mode; }
+  // unsaved edits in this view (Build) are not thrown away silently: hold the new model back
+  if (undoStack.length || (M && !REVIEW())) { PENDING = m; LIVE = m.live; MODEL_ERROR = m.model_error || null; renderAll(); if (M) rerenderModal(); return; }
+  applyModel(m);
+}
+function applyPending() { if (PENDING && !undoStack.length) applyModel(PENDING); else renderBanners(); }
+/* Swap in a new model, keeping selection, folded maps, mode, viewport and node positions. */
+function applyModel(m) {
+  const keepPos = currentPos(), keepSel = S.sel, keepView = { ...view };
+  setModel(m); PENDING = null;
+  undoStack.length = 0;
+  S = fromModel(RAW); VG = null;
+  [...unfolded].forEach(id => { if (!MAPS[id]) unfolded.delete(id); });
+  const lay = computeLayout(); let fresh = false;
+  vids().forEach(i => { if (keepPos[i]) Object.assign(P(i), keepPos[i]); else { fresh = true; Object.assign(P(i), lay[i]); } });
+  if (keepSel && (keepSel.type === 'node' ? vnode(keepSel.id) : vedgeById(keepSel.id))) S.sel = keepSel;
+  hover = null;
+  updateDirty(); renderAll(); renderPositions();
+  view = keepView; applyView();
+  if (fresh) animateTo(lay, null);
+  if (M) {
+    if (!S.targets[M.id]) closeModal(true);
+    else { const f = fnOf(M.id); M.t = JSON.parse(JSON.stringify(S.targets[M.id])); M.f = f ? JSON.parse(JSON.stringify(f)) : null; M.deps = deps(M.id); rerenderModal(); }
+  }
+}
+/* Re-render the open dialog without losing its scroll position or the comment being typed. */
+function rerenderModal() {
+  if (!M) return;
+  const body = modal.querySelector('.m-body'), top = body ? body.scrollTop : 0, a = document.activeElement;
+  const typing = a && modal.contains(a) && a.dataset.vcmt != null ? { item: a.dataset.vcmt, pos: a.selectionStart } : null;
+  renderModal();
+  const nb = modal.querySelector('.m-body'); if (nb) nb.scrollTop = top;
+  if (typing) {
+    const el = [...modal.querySelectorAll('[data-vcmt]')].find(x => x.dataset.vcmt === typing.item);
+    if (el && !el.disabled) { el.focus(); try { el.setSelectionRange(typing.pos, typing.pos); } catch { /* not a text field */ } }
+  }
+}
+
+/* ---------- Verdicts (live page, Review mode) ---------- */
+const shortSha = x => String(x || '').slice(0, 7);
+function showVerdictState(item) {
+  if (M) rerenderModal();
+  renderNodebar();
+  const r = vst(item).result;
+  if (r && r.toast) toast(`${item}: ${r.text}${r.commit ? ' ' + r.commit : ''}`);
+}
+async function sendVerdict(item, verdict) {
+  const st = vst(item), comment = (st.draft || '').trim();
+  if (!IS_LIVE || !REVIEW() || st.busy) return;
+  if (!LIVE.can_record) { st.result = { cls: 'err', text: LIVE.blocked_reason || 'Commit your changes first.', toast: true }; return showVerdictState(item); }
+  if (verdict !== 'correct' && !comment) {
+    st.result = { cls: 'err', text: `Add a comment: ${verdict} needs one, then press ${verdict === 'wrong' ? 'Wrong' : 'Questionable'} again.` };
+    showVerdictState(item);
+    const el = [...modal.querySelectorAll('[data-vcmt]')].find(x => x.dataset.vcmt === item); if (el) el.focus();
+    return;
+  }
+  st.busy = true; st.result = { text: `Recording ${verdict}…` }; showVerdictState(item);
+  let version = null;
+  try {
+    const r = await api('verdict', comment ? { item, verdict, comment } : { item, verdict });
+    version = r.version;
+    if (r.committed) { st.result = { cls: 'ok', text: `${verdict}: committed`, commit: shortSha(r.commit), toast: true }; st.draft = ''; }
+    else st.result = { cls: 'err', text: `${verdict}: saved, not committed: ${r.error || 'git refused the commit'}`, retry: true, toast: true };
+  } catch (e) {
+    st.result = { cls: 'err', text: connText(e), toast: true };
+    if (e.kind === 'lost' || e.kind === 'refused') setConn(e);
+  }
+  st.busy = false;
+  showVerdictState(item);
+  if (version != null) await syncTo(version);
+}
+async function retryCommit(item) {
+  if (!IS_LIVE) return;
+  const st = item ? vst(item) : { result: null };
+  st.result = { text: 'Committing again…' }; if (item) showVerdictState(item);
+  let version = null;
+  try {
+    const r = await api('retry', {});
+    version = r.version;
+    const failed = arr(r.results).filter(x => !x.committed);
+    st.result = r.ok ? { cls: 'ok', text: `committed ${arr(r.results).length} entr${arr(r.results).length === 1 ? 'y' : 'ies'} under qa/reviews/`, toast: true }
+      : { cls: 'err', text: `still not committed: ${failed.map(x => `${x.file}: ${x.error || '?'}`).join('; ') || 'git refused the commit'}`, retry: true, toast: true };
+  } catch (e) { st.result = { cls: 'err', text: connText(e), retry: true, toast: true }; }
+  if (item) showVerdictState(item); else toast(st.result.text);
+  if (version != null) await syncTo(version);
+}
+/* Node toolbar: Correct records at once; Questionable and Wrong open the dialog for the comment. */
+function quickVerdict(did, verdict) {
+  const q = primaryRecord(did); if (!q) return;
+  if (verdict === 'correct') return sendVerdict(q.item, 'correct');
+  vst(q.item).result = { text: `Add a comment, then press ${verdict === 'wrong' ? 'Wrong' : 'Questionable'}.` };
+  openModal(repOf(did));
+  setTimeout(() => { const el = [...modal.querySelectorAll('[data-vcmt]')].find(x => x.dataset.vcmt === q.item); if (el && !el.disabled) el.focus(); }, 40);
+}
+
+/* ---------- Banners, session, mode, sidebar, theme ---------- */
+function renderBanners() {
+  const out = [];
+  if (CONN) out.push(['err', connText(CONN)]);
+  if (MODEL_ERROR) out.push(['', `The pipeline could not be read again; this shows the last good version. ${MODEL_ERROR}`]);
+  if (LIVE && LIVE.qa_error) out.push(['', `Review status not refreshed: ${LIVE.qa_error}`]);
+  if (LIVE && LIVE.watch_error) out.push(['', `Watching the project for changes failed: ${LIVE.watch_error}`]);
+  const el = $('#banners');
+  el.innerHTML = out.map(([cls, text]) => `<div class="banner${cls ? ' ' + cls : ''}">${esc(text)}</div>`).join('')
+    + (PENDING ? `<div class="banner info">The project changed in R. This view still has changes of its own.<button data-reload="1">Show the new version (drops them)</button></div>` : '');
+  el.hidden = !out.length && !PENDING;
+}
+$('#banners').addEventListener('click', e => { if (e.target.closest('[data-reload]') && PENDING) { applyModel(PENDING); renderBanners(); toast('Showing the version from R.'); } });
+const hhmm = d => d && !isNaN(d) ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+function renderSession() {
+  const el = $('#session');
+  if (IS_LIVE) {
+    el.classList.toggle('off', !!CONN);
+    el.title = CONN ? connText(CONN) : 'Connected to R: changes to the project show up here';
+    el.innerHTML = `<code>${esc(RAW.project)}</code> · ${CONN ? 'not connected' : `live${refreshedAt ? ` · refreshed ${hhmm(refreshedAt)}` : ''}`}`;
+    return;
+  }
+  const readAt = RAW.read_at ? new Date(RAW.read_at.replace(/([+-]\d\d)(\d\d)$/, '$1:$2')) : null;
+  el.innerHTML = `<code>${esc(RAW.project)}</code> · read ${hhmm(readAt) || 'from disk'} · run <code>pipeworks()</code> again to refresh`;
+}
+/* What the mode shows outside the canvas: switch, editing buttons, hints. */
+function renderChrome() {
+  const rv = REVIEW();
+  $('#mode-review').setAttribute('aria-pressed', String(rv));
+  $('#mode-build').setAttribute('aria-pressed', String(!rv));
+  $('#btn-add').hidden = rv; $('#btn-undo').hidden = rv; $('#reset-section').hidden = rv;
+  $('#hint-plug').hidden = rv; $('#hint-dbl').textContent = rv ? 'review' : 'edit'; $('#empty-add').hidden = rv;
+  $('#qa-help').innerHTML = !rv ? 'Switch to <b>Review</b> to record verdicts.'
+    : IS_LIVE ? 'Record verdicts in the dialog of a target or with ✓ ? ✗ on its toolbar.'
+    : 'Record verdicts with <code>pipeworks::qa_review()</code>; the dialog of a target shows the call.';
+}
+function setMode(m) {
+  if (m === mode) return;
+  mode = m; hover = null;
+  if (drag) drag = null;
+  renderAll();
+  if (M) rerenderModal();
+  toast(m === 'review' ? 'Review mode: the structure is read-only.' : 'Build mode: changes stay in this view.');
+}
+$('#mode-review').onclick = () => setMode('review');
+$('#mode-build').onclick = () => setMode('build');
+
+/* Per-browser preferences; storage can be blocked (private window, artifact preview), so every access is wrapped. */
+const pref = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* not remembered */ } },
+};
+const appEl = $('.app'), sidebarEl = $('#sidebar'), sbBtn = $('#btn-sidebar');
+function setSidebar(open, save) {
+  sidebarEl.hidden = !open; appEl.classList.toggle('sb-off', !open);
+  sbBtn.setAttribute('aria-expanded', String(open));
+  sbBtn.title = open ? 'Hide the sidebar' : 'Show the sidebar';
+  sbBtn.setAttribute('aria-label', sbBtn.title);
+  if (save) { pref.set('pipeworks-sidebar', open ? '1' : '0'); requestAnimationFrame(fitView); }
+}
+sbBtn.onclick = () => setSidebar(sidebarEl.hidden, true);
+const THEMES = ['system', 'light', 'dark'], THEME_LABEL = { system: '◐ System', light: '☀ Light', dark: '☾ Dark' };
+let theme = THEMES.includes(pref.get('pipeworks-theme')) ? pref.get('pipeworks-theme') : 'system';
+function applyTheme(touch) {
+  const root = document.documentElement;
+  // "system" leaves the attribute alone at start, so a host page that sets its own theme keeps it
+  if (theme === 'system') { if (touch) root.removeAttribute('data-theme'); } else root.setAttribute('data-theme', theme);
+  const b = $('#btn-theme'), next = THEMES[(THEMES.indexOf(theme) + 1) % 3];
+  b.textContent = THEME_LABEL[theme];
+  b.title = `Theme: ${theme === 'system' ? 'follows the system' : theme}. Click for ${next}.`;
+}
+$('#btn-theme').onclick = () => { theme = THEMES[(THEMES.indexOf(theme) + 1) % 3]; pref.set('pipeworks-theme', theme); applyTheme(true); };
+
 /* ---------- Boot ---------- */
-const readAt = RAW.read_at ? new Date(RAW.read_at.replace(/([+-]\d\d)(\d\d)$/, '$1:$2')) : null;
-$('#session').innerHTML = `<code>${esc(RAW.project)}</code> · read ${readAt && !isNaN(readAt) ? readAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'from disk'} · run <code>pipeworks()</code> again to refresh`;
+applyTheme(false);
+setSidebar(pref.get('pipeworks-sidebar') !== '0', false);
+renderSession();
+renderBanners();
 updateDirty();
 renderAll();
 const p0 = computeLayout(); vids().forEach(i => Object.assign(P(i), p0[i]));
 renderPositions(); view = fitFor(p0); applyView();
 let resizeT; addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { view = fitFor(currentPos()); applyView(); }, 200); });
+if (IS_LIVE) schedulePoll();
 })();
 </script>

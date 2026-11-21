@@ -45,6 +45,12 @@ qa_check()                            # fails until every open item has a verdic
 qa_report()                           # writes qa-report.pdf
 ```
 
+The editor opened by `pipeworks()` does the same in its Review mode: the
+Correct / Questionable / Wrong buttons in the dialog of a target (or ✓ ? ✗ on
+its toolbar) record the verdict and commit its file. The page refreshes when
+the code or `qa/` changes. Build mode is for changing the pipeline in the
+view; the top bar switches between the two.
+
 `qa_review()` only works on committed code: every file in `R/`, `_targets.R`
 and the report sources must be committed. It writes one file per verdict to
 `qa/reviews/`. Commit these files with the branch. `qa_report(final = TRUE)`

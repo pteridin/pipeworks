@@ -26,6 +26,16 @@ test_that("example_project() copies the project without build output", {
   expect_error(example_project(dest), "already exists")
 })
 
+test_that("the editor template is a fragment that calls the API by relative URLs", {
+  template <- paste(readLines(system.file("app", "index.html", package = "pipeworks")), collapse = "\n")
+  expect_false(grepl("<(html|head|body)[ >]", template))
+  # an absolute /api/ path would break behind the RStudio Server proxy
+  expect_false(grepl("[\"'`(]/api/", template))
+  expect_match(template, "fetch('api/' + path", fixed = TRUE)
+  expect_match(template, "X-Pipeworks-Token", fixed = TRUE)
+  expect_match(template, "history.replaceState(null, '', location.pathname)", fixed = TRUE)
+})
+
 test_that("hidden elements stay hidden outside the artifact viewer", {
   template <- paste(readLines(system.file("app", "index.html", package = "pipeworks")), collapse = "\n")
   expect_match(template, "[hidden][hidden] { display: none !important; }", fixed = TRUE)

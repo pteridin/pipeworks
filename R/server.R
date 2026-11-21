@@ -317,7 +317,9 @@ pw_live <- function(state) {
     blockers = I(rec$blockers),
     blocked_reason = rec$reason,
     qa_error = state$qa_error,
-    watch_error = state$watch_error
+    watch_error = state$watch_error,
+    # the page warns before a self-review (compared with `last_author` of an item)
+    user = if (git_available()) git_user(state$path)$name else NA_character_
   )
 }
 

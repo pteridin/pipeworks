@@ -75,6 +75,7 @@ test_that("the page embeds the model with the live block", {
   expect_equal(m$live$version, state$version)
   expect_true(m$live$can_record)
   expect_equal(m$live$base, "main")
+  expect_equal(m$live$user, git_user(repo)$name)
   expect_null(m$model_error)
   expect_true(length(m$targets) > 0)
 })
