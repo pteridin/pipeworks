@@ -491,3 +491,127 @@ test_that("a rename_target request round-trips through read_pipeline()", {
   m2 <- read_pipeline(path, status = FALSE)
   nm <- vapply(m2$targets, function(t) t$name, ""); expect_true("tidy_data" %in% nm); expect_false("clean_data" %in% nm)
 })
+
+# --- final review fixes --------------------------------------------------------
+
+add_req <- function(block, target = "y", fn = new_fn("g", body = "1"), args = list(), pattern = NULL) {
+  list(kind = "add_target", target = target, block = block, fn = fn, args = args, format = NULL, pattern = pattern)
+}
+
+small_project <- function(env = parent.frame()) {
+  local_project(list("_targets.R" = c("library(targets)", "tar_source()", "list(pipeline_a)"),
+    "R/a.R" = c("f <- function() 1", "", "pipeline_a <- list(", "  tar_target(x, f())", ")")), env = env)
+}
+
+test_that("add_target refuses blocks outside R/ and odd paths", {
+  path <- small_project()
+  targets_before <- read_utf8(file.path(path, "_targets.R"))
+  for (b in c("R/../outside.R", "R/../_targets.R", "R/./a.R", "R//b.R", "R\\b.R", "R/sub/../b.R", "R/", "R/.R", "/R/b.R")) {
+    expect_error(apply_changes(path, list(add_req(b))), class = "pipeworks_bad_change", info = b)
+  }
+  expect_false(file.exists(file.path(path, "outside.R")))
+  expect_equal(read_utf8(file.path(path, "_targets.R")), targets_before)
+  # a symlinked directory below R/ that points outside the project
+  outside <- withr::local_tempdir()
+  skip_if_not(file.symlink(outside, file.path(path, "R", "ext")), "no symlinks")
+  expect_error(apply_changes(path, list(add_req("R/ext/b.R"))), "below R/", class = "pipeworks_bad_change")
+  expect_equal(list.files(outside), character())
+  # a plain subdirectory is fine (tar_source() reads R/ recursively)
+  res <- apply_changes(path, list(add_req("R/sub/b.R")))
+  expect_true("R/sub/b.R" %in% res$files)
+})
+
+test_that("add_target refuses a file that exists under another spelling", {
+  path <- small_project()
+  skip_if_not(file.exists(file.path(path, "R", "A.R")), "case-sensitive file system")
+  before <- read_utf8(file.path(path, "R/a.R"))
+  expect_error(apply_changes(path, list(add_req("R/A.R"))), "R/a.R exists under another spelling",
+    fixed = TRUE, class = "pipeworks_bad_change")
+  expect_equal(read_utf8(file.path(path, "R/a.R")), before)
+})
+
+test_that("undo refuses when its text sits elsewhere and the original was edited", {
+  dir <- local_project(list("R/a.R" = c("#' F", "#' @param x Old.", "f <- function(x) x", "",
+    "#' G", "#' @param x Input.", "g <- function(x) x")))
+  file <- file.path(dir, "R/a.R")
+  res <- apply_changes(dir, list(list(kind = "set_doc", item = "function:f", base = wb_base_of(dir, "function:f"),
+    fn = "f", field = "param", param = "x", value = "Input.")))
+  expect_equal(read_utf8(file)[2], "#' @param x Input.")
+  l <- read_utf8(file); l[2] <- "#' @param x By hand."; writeLines(l, file)
+  expect_error(undo_changes(dir, res$undo), class = "pipeworks_stale")
+  expect_equal(read_utf8(file), l)
+})
+
+test_that("undo refuses a copy at another position even with the same context", {
+  dir <- local_project(list("R/a.R" = c("#' T", "#' @param x Old.", "#' @export", "",
+    "#' T", "#' @param x Input.", "#' @export")))
+  file <- file.path(dir, "R/a.R")
+  undo <- list("R/a.R" = list(before = read_utf8(file),
+    after = replace(read_utf8(file), 2, "#' @param x Input."), existed = TRUE, start = 2L))
+  # the user edited the original; the other copy has the same lines around it
+  l <- replace(read_utf8(file), 2, "#' @param x By hand."); writeLines(l, file)
+  expect_error(undo_changes(dir, undo), class = "pipeworks_stale")
+  expect_equal(read_utf8(file), l)
+})
+
+test_that("undo follows lines added above the edit", {
+  x <- wb_example(); f <- file.path(x$path, "R/import.R"); orig <- read_utf8(f)
+  res <- apply_changes(x$path, list(set_title(x, "select_area")))
+  expect_identical(res$undo[["R/import.R"]]$start, which(read_utf8(f) == "#' X"))
+  writeLines(c("# one", "# two", read_utf8(f)), f)
+  undo_changes(x$path, res$undo)
+  expect_equal(read_utf8(f), c("# one", "# two", orig))
+})
+
+test_that("a failed rollback is named in the error", {
+  x <- wb_example(); base_write <- write_text
+  # R/model.R is written first, R/utils.R fails, restoring R/model.R fails too
+  n_model <- 0L
+  local_mocked_bindings(write_text = function(file, txt) {
+    if (grepl("utils", file)) stop("disk full")
+    if (grepl("model", file)) {
+      n_model <<- n_model + 1L
+      if (n_model > 1L) stop("read-only")
+    }
+    base_write(file, txt)
+  })
+  expect_error(apply_changes(x$path, list(list(kind = "rename_function", item = "function:rescale01",
+    base = wb_base_of(x$path, "function:rescale01"), fn = "rescale01", to = "rescale_unit"))),
+    "disk full; could not restore R/model.R, check it in RStudio", fixed = TRUE)
+  expect_equal(n_model, 2L)
+})
+
+test_that("a missing item is stale without naming a file", {
+  x <- wb_example()
+  err <- tryCatch(apply_changes(x$path, list(list(kind = "remove_target", item = "target:nope", base = "0", target = "nope"))),
+    pipeworks_stale = function(e) e)
+  expect_false(grepl("NA", conditionMessage(err)))
+  expect_match(conditionMessage(err), "target:nope", fixed = TRUE)
+})
+
+test_that("code that does not parse is refused as a bad change", {
+  x <- wb_example()
+  tb <- function(t) wb_base_of(x$path, paste0("target:", t))
+  pat <- list(kind = "set_target_arg", item = "target:raw_data", base = tb("raw_data"), target = "raw_data",
+    arg = "pattern", value = "map(x")
+  expect_error(apply_changes(x$path, list(pat)), "pattern `map(x` does not parse", fixed = TRUE, class = "pipeworks_bad_change")
+  call <- list(kind = "set_call", item = "target:raw_data", base = tb("raw_data"), target = "raw_data",
+    args = list(list(name = "file", value = "c(1,", named = TRUE)))
+  expect_error(apply_changes(x$path, list(call)), "`c(1,` does not parse", fixed = TRUE, class = "pipeworks_bad_change")
+  two <- call; two$args[[1]]$value <- "1; 2"
+  expect_error(apply_changes(x$path, list(two)), "does not parse", class = "pipeworks_bad_change")
+  add <- add_req("R/model.R", args = list(list(name = "", value = "features)", named = FALSE)))
+  expect_error(apply_changes(x$path, list(add)), "`features)` does not parse", fixed = TRUE, class = "pipeworks_bad_change")
+  add <- add_req("R/model.R", pattern = "map(")
+  expect_error(apply_changes(x$path, list(add)), "pattern `map(` does not parse", fixed = TRUE, class = "pipeworks_bad_change")
+})
+
+test_that("rename_function counts uses it leaves alone", {
+  dir <- local_project(list("R/a.R" = c("fn <- function(x) x", "g <- function(x) fn(x)", "h <- function(x) lapply(x, fn)")))
+  out <- chg_rename_function(wb_files(dir), list(fn = "fn", to = "fn2"))
+  expect_equal(attr(out, "notes"),
+    "Renamed 1 call(s) of fn(); 1 other use(s) (e.g. passed as a value), calls by string and in reports are not followed.")
+  dir <- local_project(list("R/a.R" = c("fn <- function(x) x", "g <- function(x) fn(x)")))
+  out <- chg_rename_function(wb_files(dir), list(fn = "fn", to = "fn2"))
+  expect_equal(attr(out, "notes"), "Renamed 1 call(s) of fn(); calls by string or in reports are not followed.")
+})

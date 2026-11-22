@@ -295,8 +295,32 @@ chg_set_body <- function(files, ch) {
   wb_splice(files, r$rel, r$p, wb_edit(b$line1, b$col1, b$line2, b$col2, text))
 }
 
+# Refuse R code from the page that does not parse as one expression.
+wb_check_code <- function(text, what) {
+  if (!is.character(text) || length(text) != 1L || is.na(text) || !nzchar(trimws(text))) {
+    wb_bad(sprintf("%s needs a value.", what))
+  }
+  ex <- tryCatch(parse(text = text, keep.source = FALSE, encoding = "UTF-8"), error = function(e) e)
+  if (inherits(ex, "error")) {
+    why <- sub("^<text>:[0-9]+:[0-9]+: ", "", strsplit(conditionMessage(ex), "\n")[[1]][1])
+  } else if (length(ex) != 1L) {
+    why <- "it is not a single expression"
+  } else {
+    return(invisible(text))
+  }
+  wb_bad(sprintf("%s `%s` does not parse: %s.", what, text, why))
+}
+
+wb_check_args <- function(args) {
+  for (a in args) {
+    nm <- if (isTRUE(a$named) && is.character(a$name) && length(a$name) == 1L) paste("argument", a$name) else "argument"
+    wb_check_code(a$value, nm)
+  }
+}
+
 chg_set_target_arg <- function(files, ch) {
   stopifnot(ch$arg %in% c("format", "pattern", "description"))
+  if (ch$arg == "pattern" && !is.null(ch$value)) wb_check_code(ch$value, "pattern")
   r <- wb_find_target(files, ch$target)
   text <- if (is.null(ch$value)) NULL else if (ch$arg == "pattern") ch$value else quote_r(ch$value)
   locate <- function(p) {
@@ -312,6 +336,7 @@ chg_set_target_arg <- function(files, ch) {
 }
 
 chg_set_call <- function(files, ch) {
+  wb_check_args(ch$args)
   r <- wb_find_target(files, ch$target)
   if (is.na(r$t$cmd_id) || is.na(wb_callee(r$p, r$t$cmd_id))) {
     wb_bad(sprintf("The command of target %s is not a plain function call; change it in RStudio.", ch$target))
@@ -494,17 +519,28 @@ chg_rename_function <- function(files, ch) {
   parsed <- wb_parse_all(files)
   wb_check_free(parsed, to)
   n <- 0L
+  m <- 0L
   for (rel in names(parsed)) {
     p <- parsed[[rel]]
     pd <- p$pd
+    ns <- pd$parent[pd$token %in% c("NS_GET", "NS_GET_INT", "'$'", "'@'")]
     calls <- pd[pd$token == "SYMBOL_FUNCTION_CALL" & pd$text == fn, , drop = FALSE]
-    calls <- calls[!calls$parent %in% pd$parent[pd$token %in% c("NS_GET", "NS_GET_INT")], , drop = FALSE]
+    calls <- calls[!calls$parent %in% ns, , drop = FALSE]
     n <- n + nrow(calls)
+    # bare uses (`lapply(x, fn)`) are left alone, only counted
+    uses <- pd$token == "SYMBOL" & pd$text == fn & !pd$parent %in% ns
+    if (rel == r$rel) uses <- uses & pd$id != r$f$name_id
+    m <- m + sum(uses)
     rows <- calls
     if (rel == r$rel) rows <- rbind(rows, pd[pd$id == r$f$name_id, , drop = FALSE])
     if (nrow(rows)) files <- wb_splice(files, rel, p, wb_token_edits(rows, to))
   }
-  wb_note(files, sprintf("Renamed %d call(s) of %s(); calls by string or in reports are not followed.", n, fn))
+  wb_note(files, if (m == 0L) {
+    sprintf("Renamed %d call(s) of %s(); calls by string or in reports are not followed.", n, fn)
+  } else {
+    sprintf("Renamed %d call(s) of %s(); %d other use(s) (e.g. passed as a value), calls by string and in reports are not followed.",
+      n, fn, m)
+  })
 }
 
 chg_rename_target <- function(files, ch) {
@@ -588,11 +624,46 @@ wb_append_element <- function(p, lst, text) {
   wb_append(p, args, cp, joined, indent = indent)
 }
 
+# Check the block file `block` of a new target: plain path segments, inside
+# R/ of the project once symlinks are resolved, and not an existing file
+# under another spelling (a case-insensitive file system would overwrite it).
+wb_block_path <- function(files, block) {
+  if (!is.character(block) || length(block) != 1L || is.na(block)) wb_bad("The block must be a file R/<name>.R.")
+  seg <- strsplit(block, "/", fixed = TRUE)[[1]]
+  if (grepl("\\", block, fixed = TRUE) || endsWith(block, "/") || length(seg) < 2L || seg[1] != "R" ||
+      any(seg %in% c("", ".", "..")) || !grepl("^.+\\.[Rr]$", seg[length(seg)])) {
+    wb_bad(sprintf("The block must be a file R/<name>.R, not %s.", block))
+  }
+  root <- normalizePath(attr(files, "root"), mustWork = TRUE)
+  r_dir <- file.path(root, "R")
+  dir <- dirname(file.path(root, block))
+  while (!dir.exists(dir)) dir <- dirname(dir)
+  dir <- normalizePath(dir, mustWork = TRUE)
+  inside <- if (dir.exists(r_dir)) {
+    r_dir <- normalizePath(r_dir, mustWork = TRUE)
+    dir == r_dir || startsWith(dir, paste0(r_dir, "/"))
+  } else {
+    dir == root
+  }
+  if (!inside) wb_bad(sprintf("The block %s must stay below R/ of the project.", block))
+  wb_check_spelling(files, block)
+  invisible(block)
+}
+
+# A path the page names that exists on disk only under another spelling.
+wb_check_spelling <- function(files, rel) {
+  full <- file.path(attr(files, "root"), rel)
+  if (!file.exists(full) || basename(rel) %in% list.files(dirname(full), all.files = TRUE)) return(invisible(rel))
+  rels <- wb_rels(files)
+  other <- rels[tolower(rels) == tolower(rel)]
+  wb_bad(sprintf("%s exists under another spelling; use that name.", if (length(other)) other[1] else rel))
+}
+
 chg_add_target <- function(files, ch) {
   block <- ch$block
-  if (!is.character(block) || length(block) != 1L || !grepl("^R/.+\\.[Rr]$", block)) {
-    wb_bad("The block must be a file R/<name>.R.")
-  }
+  wb_block_path(files, block)
+  if (!is.null(ch$pattern)) wb_check_code(ch$pattern, "pattern")
+  wb_check_args(ch$args)
   stem <- sub("\\.[Rr]$", "", basename(block))
   holder <- paste0("pipeline_", stem)
   wb_check_name(holder, "block list name")
@@ -647,12 +718,22 @@ chg_add_target <- function(files, ch) {
 
 # --- the transaction ---------------------------------------------------------
 
+# `reason` says what changed; the message adds what the page does about it
+# (the server words that differently while the model cannot be rebuilt).
+WB_REFRESHED <- "The view is refreshed; try again."
+
 wb_stale <- function(item, file, message = NULL) {
+  reason <- NULL
   if (is.null(message)) {
-    message <- sprintf("%s in %s changed since the page loaded it. The view is refreshed; try again.", item, file)
+    reason <- if (is.na(file)) {
+      sprintf("%s is no longer in the files since the page loaded it.", item)
+    } else {
+      sprintf("%s in %s changed since the page loaded it.", item, file)
+    }
+    message <- paste(reason, WB_REFRESHED)
   }
   stop(structure(class = c("pipeworks_stale", "error", "condition"),
-    list(message = message, call = NULL, item = item, file = file)))
+    list(message = message, call = NULL, item = item, file = file, reason = reason)))
 }
 
 # kind -> (item prefix, required string fields, required list fields)
@@ -733,6 +814,7 @@ apply_changes <- function(path, changes) {
     is.null(before[[rel]]) || !identical(before[[rel]]$lines, files[[rel]]$lines)
   }, logical(1))
   rels <- rels[changed]
+  for (rel in rels) wb_check_spelling(files, rel)
   for (rel in rels) {
     tryCatch(wb_parse(files[[rel]]$lines, rel), error = function(e) {
       stop(sprintf("Bug: the change would break %s; nothing was written.", rel), call. = FALSE)
@@ -745,15 +827,21 @@ apply_changes <- function(path, changes) {
       written <- c(written, rel)
     }
   }, error = function(e) {
+    lost <- character()
     for (rel in written) {
-      if (is.null(before[[rel]])) unlink(disk(rel)) else try(write_text(disk(rel), before[[rel]]), silent = TRUE)
+      ok <- if (is.null(before[[rel]])) unlink(disk(rel)) == 0L else
+        !inherits(tryCatch(write_text(disk(rel), before[[rel]]), error = function(e2) e2), "error")
+      if (!ok) lost <- c(lost, rel)
     }
-    stop(e)
+    msg <- conditionMessage(e)
+    if (length(lost)) msg <- sprintf("%s; could not restore %s, check it in RStudio", msg, paste(lost, collapse = ", "))
+    stop(msg, call. = FALSE)
   })
-  undo <- lapply(rels, function(rel) list(
-    before = if (is.null(before[[rel]])) character() else before[[rel]]$lines,
-    after = files[[rel]]$lines, existed = !is.null(before[[rel]])
-  ))
+  undo <- lapply(rels, function(rel) {
+    b <- if (is.null(before[[rel]])) character() else before[[rel]]$lines
+    a <- files[[rel]]$lines
+    list(before = b, after = a, existed = !is.null(before[[rel]]), start = wb_common_prefix(a, b) + 1L)
+  })
   names(undo) <- rels
   notes <- attr(files, "notes")
   list(files = rels, notes = if (is.null(notes)) character() else as.character(notes), undo = undo)
@@ -767,17 +855,41 @@ wb_find_seq <- function(hay, needle) {
   hits[vapply(hits, function(i) i + n - 1L <= length(hay) && identical(hay[i:(i + n - 1L)], needle), logical(1))]
 }
 
-# Where `after` (a region of the edit) sits in `cur`: the single occurrence,
-# widened by context lines of the kept text until it is unique. `NULL` if it
-# is gone or still ambiguous.
-wb_undo_place <- function(cur, prefix, region, suffix) {
-  for (k in 0:max(length(prefix), length(suffix))) {
+wb_common_prefix <- function(a, b) {
+  m <- min(length(a), length(b))
+  k <- 0L
+  while (k < m && identical(a[k + 1L], b[k + 1L])) k <- k + 1L
+  k
+}
+
+wb_common_suffix <- function(a, b, max = min(length(a), length(b))) {
+  k <- 0L
+  while (k < max && identical(a[length(a) - k], b[length(b) - k])) k <- k + 1L
+  k
+}
+
+# Where `region` (lines `start`.. of `after`, the text the edit wrote) sits
+# in `cur`, the file now. Edits made since then lie between the common
+# prefix and suffix of `after` and `cur`: above the region they shift it by
+# the net line change, below they leave it in place; overlapping, the region
+# may sit anywhere in between. A hit must be inside that window, with as many
+# context lines (kept text around the region) as it takes to be unique, at
+# least one when there is any. `NULL` when it is gone or still ambiguous.
+wb_undo_place <- function(cur, after, start, prefix, region, suffix) {
+  delta <- length(cur) - length(after)
+  cp <- wb_common_prefix(cur, after)
+  cs <- wb_common_suffix(cur, after, min(length(cur), length(after)) - cp)
+  end <- start + length(region) - 1L
+  ok <- if (end <= cp) start else if (start > length(after) - cs) start + delta else
+    seq(start + min(0L, delta), start + max(0L, delta))
+  for (k in min(1L, max(length(prefix), length(suffix))):max(length(prefix), length(suffix))) {
     pre <- utils::tail(prefix, min(k, length(prefix)))
     suf <- utils::head(suffix, min(k, length(suffix)))
     needle <- c(pre, region, suf)
     if (!length(needle)) next
-    hits <- wb_find_seq(cur, needle)
-    if (length(hits) == 1L) return(list(from = hits + length(pre), n = length(region)))
+    hits <- wb_find_seq(cur, needle) + length(pre)
+    hits <- hits[hits %in% ok]
+    if (length(hits) == 1L) return(list(from = hits, n = length(region)))
     if (!length(hits)) return(NULL)
   }
   NULL
@@ -798,13 +910,11 @@ undo_changes <- function(path, undo) {
     }
     b <- u$before
     a <- u$after
-    m <- min(length(a), length(b))
-    pre <- 0L
-    while (pre < m && identical(a[pre + 1L], b[pre + 1L])) pre <- pre + 1L
-    suf <- 0L
-    while (suf < m - pre && identical(a[length(a) - suf], b[length(b) - suf])) suf <- suf + 1L
+    pre <- wb_common_prefix(a, b)
+    suf <- wb_common_suffix(a, b, min(length(a), length(b)) - pre)
+    start <- if (is.null(u$start)) pre + 1L else as.integer(u$start)
     region <- a[seq_len(length(a) - pre - suf) + pre]
-    at <- wb_undo_place(txt$lines, a[seq_len(pre)], region, a[seq_len(suf) + length(a) - suf])
+    at <- wb_undo_place(txt$lines, a, start, a[seq_len(pre)], region, a[seq_len(suf) + length(a) - suf])
     if (is.null(at)) stale(rel)
     restore <- b[seq_len(length(b) - pre - suf) + pre]
     lines <- txt$lines
