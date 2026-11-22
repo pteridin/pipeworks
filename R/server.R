@@ -1,8 +1,8 @@
 # The live server behind `pipeworks()`: an httpuv server inside the R session
 # (the console stays free), one per project, with a small JSON API for
 # verdicts, retries and "open in RStudio", and a watcher that refreshes the
-# model when project files change. The browser never writes files: every
-# write goes through `record_verdict()`.
+# model when project files change. The browser writes files only through
+# `record_verdict()` (reviews) and `apply_changes()` (code).
 
 # Running servers by normalised project path.
 pw_servers <- new.env(parent = emptyenv())
@@ -26,6 +26,8 @@ pw_state <- function(path, model = NULL, mode = "auto", port = NA_integer_, toke
   state$open_file <- open_file
   state$version <- 1L
   state$bg <- NULL
+  state$writes <- new.env(parent = emptyenv())
+  state$write_seq <- 0L
   state$server <- NULL
   state$alive <- TRUE
   state$hosts <- character()
@@ -349,6 +351,7 @@ pw_live <- function(state) {
   unc <- uncommitted_reviews(state$path)
   list(
     version = state$version,
+    building = !is.null(state$bg),
     mode = state$mode,
     base = state$model$qa_summary$base,
     can_record = rec$ok,

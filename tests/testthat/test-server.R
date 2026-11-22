@@ -474,3 +474,95 @@ test_that("records say whether a verdict now would be a self-review", {
   items$hash[items$id == "function:clean_survey"] <- "not-in-git"
   expect_false("function:clean_survey" %in% pw_self_items(repo, items))
 })
+
+fake_bg <- function() list(is_alive = function() TRUE, kill = function() NULL)
+
+local_fake_bg <- function(env = parent.frame()) {
+  local_mocked_bindings(pw_start_bg = function(state) {
+    state$bg <- fake_bg()
+    invisible(state)
+  }, .env = env)
+}
+
+edit_title <- function(repo, value = "X") {
+  list(changes = list(list(
+    kind = "set_doc", item = "function:read_survey", base = wb_base_of(repo, "function:read_survey"),
+    fn = "read_survey", field = "title", value = value
+  )))
+}
+
+test_that("api/edit writes, returns a write id and marks the model as building", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  local_fake_bg()
+  expect_false(call_app(state, path = "/api/model")$json$live$building)
+  v0 <- state$version
+  res <- call_app(state, method = "POST", path = "/api/edit", body = edit_title(repo))
+  expect_equal(res$status, 200L)
+  expect_true(res$json$ok)
+  expect_equal(res$json$write_id, "w1")
+  expect_true(res$json$version > v0)
+  expect_true("R/import.R" %in% unlist(res$json$files))
+  expect_type(res$json$notes, "list")
+  expect_equal(readLines(file.path(repo, "R/import.R"))[1], "#' X")
+  expect_true(call_app(state, path = "/api/model")$json$live$building)
+  res2 <- call_app(state, method = "POST", path = "/api/edit", body = edit_title(repo, "Y"))
+  expect_equal(res2$json$write_id, "w2")
+})
+
+test_that("api/edit answers 409 on a stale base and 400 on a bad change", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  local_fake_bg()
+  before <- readLines(file.path(repo, "R/import.R"))
+  stale <- edit_title(repo)
+  stale$changes[[1]]$base <- "0"
+  res <- call_app(state, method = "POST", path = "/api/edit", body = stale)
+  expect_equal(res$status, 409L)
+  expect_equal(res$json$item, "function:read_survey")
+  expect_equal(res$json$file, "R/import.R")
+  expect_equal(readLines(file.path(repo, "R/import.R")), before)
+  bad <- list(changes = list(list(kind = "frobnicate")))
+  expect_equal(call_app(state, method = "POST", path = "/api/edit", body = bad)$status, 400L)
+  expect_equal(call_app(state, method = "POST", path = "/api/edit", body = list(x = 1))$status, 400L)
+  expect_equal(call_app(state, method = "POST", path = "/api/edit", body = list(changes = "a"))$status, 400L)
+  expect_equal(call_app(state, method = "POST", path = "/api/edit", body = list(changes = list()))$status, 400L)
+  expect_null(state$bg)
+})
+
+test_that("api/undo restores and forgets the write", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  local_fake_bg()
+  orig <- readLines(file.path(repo, "R/import.R"))[1]
+  call_app(state, method = "POST", path = "/api/edit", body = edit_title(repo))
+  res <- call_app(state, method = "POST", path = "/api/undo", body = list(write_id = "w1"))
+  expect_equal(res$status, 200L)
+  expect_true(res$json$ok)
+  expect_equal(readLines(file.path(repo, "R/import.R"))[1], orig)
+  expect_equal(call_app(state, method = "POST", path = "/api/undo", body = list(write_id = "w1"))$status, 404L)
+  expect_equal(call_app(state, method = "POST", path = "/api/undo", body = list(write_id = "w9"))$status, 404L)
+  expect_equal(call_app(state, method = "POST", path = "/api/undo", body = list())$status, 400L)
+})
+
+test_that("api/undo answers 409 when the file changed since, and keeps the record", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  local_fake_bg()
+  call_app(state, method = "POST", path = "/api/edit", body = edit_title(repo))
+  f <- file.path(repo, "R/import.R")
+  lines <- readLines(f)
+  lines[1] <- "#' Changed in RStudio"
+  writeLines(lines, f)
+  expect_equal(call_app(state, method = "POST", path = "/api/undo", body = list(write_id = "w1"))$status, 409L)
+  expect_true(exists("w1", envir = state$writes))
+})
+
+test_that("only the newest 100 undo records are kept", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  for (i in 1:101) pw_remember_write(state, list(i))
+  expect_equal(length(ls(state$writes)), 100L)
+  expect_false(exists("w1", envir = state$writes))
+  expect_true(exists("w101", envir = state$writes))
+})
