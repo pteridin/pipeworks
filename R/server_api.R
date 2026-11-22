@@ -6,6 +6,13 @@
 #   POST /api/verdict   {item, verdict, comment} -> record_verdict()
 #   POST /api/retry     retry_uncommitted()
 #   POST /api/open      {item} -> open its file at its line
+#   POST /api/edit      {changes} -> apply_changes(); 200 {ok, write_id, version,
+#                       files, notes}; 400 {error} (bad change, no changes);
+#                       409 {error, item, file} (stale base). Once the files
+#                       are written the answer is 200 even if the refresh
+#                       fails (that goes to `model_error`).
+#   POST /api/undo      {write_id} -> undo_changes(); 200 {ok, version, files};
+#                       404 unknown id; 409 {error} when a file changed since
 #
 # Every request must name an allowed host (127.0.0.1:<port>, localhost:<port>,
 # the RStudio Server address, `pipeworks.allowed_origins`); API calls carry
@@ -15,7 +22,8 @@
 
 pw_routes <- c(
   "/api/version" = "GET", "/api/model" = "GET",
-  "/api/verdict" = "POST", "/api/retry" = "POST", "/api/open" = "POST"
+  "/api/verdict" = "POST", "/api/retry" = "POST", "/api/open" = "POST",
+  "/api/edit" = "POST", "/api/undo" = "POST"
 )
 
 # The httpuv app of `state`. Tests call `$call(req)` with fake requests.
@@ -53,7 +61,9 @@ pw_handle <- function(state, req) {
     "/api/model" = pw_json(pw_payload(state)),
     "/api/verdict" = pw_api_verdict(state, body),
     "/api/retry" = pw_api_retry(state),
-    "/api/open" = pw_api_open(state, body)
+    "/api/open" = pw_api_open(state, body),
+    "/api/edit" = pw_api_edit(state, body),
+    "/api/undo" = pw_api_undo(state, body)
   )
 }
 
@@ -97,6 +107,89 @@ pw_api_open <- function(state, body) {
   res <- state$open_file(file.path(state$path, items$file[row]), items$line1[row])
   if (is.list(res) && isFALSE(res$ok)) return(pw_json(list(ok = FALSE, error = res$error %||% "Cannot open the file.")))
   pw_json(list(ok = TRUE))
+}
+
+pw_api_edit <- function(state, body) {
+  changes <- body$changes
+  if (!is.list(changes) || !length(changes) || !all(vapply(changes, is.list, logical(1)))) {
+    return(pw_json(list(error = "Send `changes` (a non-empty list of change objects)."), 400L))
+  }
+  pw_save_buffers()
+  res <- tryCatch(apply_changes(state$path, unname(changes)), error = function(e) e)
+  if (inherits(res, "pipeworks_stale")) {
+    msg <- conditionMessage(res)
+    # a failed rebuild keeps the last model: the view will not refresh
+    if (!is.null(state$model_error) && !is.null(res$reason)) {
+      msg <- paste(res$reason, "The pipeline does not build right now (see the error above), so the view",
+        "cannot refresh: fix the error in RStudio or Undo your last change.")
+    }
+    return(pw_json(list(error = msg, item = res$item, file = res$file), 409L))
+  }
+  if (inherits(res, "pipeworks_bad_change")) return(pw_json(list(error = conditionMessage(res)), 400L))
+  if (inherits(res, "error")) return(pw_json(list(error = conditionMessage(res)), 500L))
+  id <- pw_remember_write(state, res$undo)
+  pw_refresh_after_code_write(state)
+  pw_json(list(
+    ok = TRUE, write_id = id, version = state$version,
+    files = I(as.character(unlist(res$files))), notes = I(as.character(unlist(res$notes)))
+  ))
+}
+
+pw_api_undo <- function(state, body) {
+  if (!is_string(body$write_id)) return(pw_json(list(error = "Send `write_id` (a string)."), 400L))
+  id <- body$write_id
+  if (!exists(id, envir = state$writes, inherits = FALSE)) {
+    return(pw_json(list(error = paste0("Unknown write: ", id)), 404L))
+  }
+  pw_save_buffers()
+  res <- tryCatch(undo_changes(state$path, get(id, envir = state$writes)), error = function(e) e)
+  if (inherits(res, "pipeworks_stale")) {
+    return(pw_json(list(error = conditionMessage(res), item = res$item, file = res$file), 409L))
+  }
+  if (inherits(res, "error")) return(pw_json(list(error = conditionMessage(res)), 409L))
+  rm(list = id, envir = state$writes)
+  pw_refresh_after_code_write(state)
+  pw_json(list(ok = TRUE, version = state$version, files = I(as.character(res))))
+}
+
+# Keep the undo record of a write under a new id ("w1", "w2", ...); the
+# oldest beyond 100 are dropped.
+pw_remember_write <- function(state, undo) {
+  state$write_seq <- state$write_seq + 1L
+  id <- paste0("w", state$write_seq)
+  assign(id, undo, envir = state$writes)
+  old <- state$write_seq - 100L
+  if (old >= 1L && exists(paste0("w", old), envir = state$writes, inherits = FALSE)) {
+    rm(list = paste0("w", old), envir = state$writes)
+  }
+  id
+}
+
+# Unsaved RStudio buffers would be overwritten or lost: save them first.
+pw_save_buffers <- function() {
+  if (rstudio_available()) try(rstudioapi::documentSaveAll(), silent = TRUE)
+  invisible()
+}
+
+# A code write changed the sources: refresh the review status now, start the
+# structure rebuild and take the code group into the fingerprint so the
+# watcher does not start a second one. The page sees the new version at once.
+# Never throws (the files are written already): a failure goes to
+# `model_error`, the kept model gets fresh bases, and the fingerprint stays
+# so the watcher tries the rebuild again.
+pw_refresh_after_code_write <- function(state) {
+  ok <- tryCatch({
+    pw_refresh_qa(state)
+    pw_start_bg(state)
+    TRUE
+  }, error = function(e) {
+    state$model_error <- paste("The files were written, but the view could not be rebuilt:", conditionMessage(e))
+    pw_refresh_bases(state)
+    FALSE
+  })
+  if (ok) state$fingerprint$code <- pw_fingerprint(state)$code
+  state$version <- state$version + 1L
+  invisible(state)
 }
 
 # A verdict or retry changed `qa/` and the git refs: refresh now and take

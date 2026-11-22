@@ -94,8 +94,27 @@ deliberate (see its `README.md`, "Edge cases"); keep them intact.
   Test standalone pages, not only the published artifact.
 - The editor shows QA status (overlay, progress, diff against base) and, in
   Review mode on a live page, records verdicts through the server.
-- Edits of the pipeline in the editor stay in memory: writing roxygen/targets
-  back to files is the next milestone.
+- The static page (`pipeworks_html()`, demo) keeps edits in memory only.
+
+## Write-back
+
+- The files are the only truth. On a live page every Build action POSTs a
+  change list to `api/edit`; the page waits for the rebuilt model.
+- R locates chunks by parse tokens (never regex) and splices text:
+  `R/write_text.R` (splicing, line endings), `R/write_locate.R` (chunk
+  ranges), `R/write_roxygen.R` (roxygen text), `R/write_back.R`
+  (`apply_changes()`, `undo_changes()`). Lines outside a touched chunk stay
+  byte-identical; unknown tags, extra arguments and comments inside it stay.
+- Every change carries `item` and `base`: `wb_item_base()` = MD5 of the item's
+  raw lines, checked per item on first touch. A mismatch refuses the whole
+  request (stale). Changes apply in order, re-parsing after each; the write
+  is all-or-none.
+- `api/undo` takes the `write_id` and restores the old text only while the
+  files still hold what the write produced.
+- Static only: project code is never sourced. No commits for code writes.
+- Vocabulary (`set_doc`, `set_formals`, `set_body`, `set_target_arg`,
+  `set_call`, `rename_*`, `remove_target`, `add_target`): see the spec
+  `docs/superpowers/specs/2026-11-22-write-back-design.md`.
 
 ## Live server
 
@@ -106,7 +125,9 @@ deliberate (see its `README.md`, "Edge cases"); keep them intact.
   `R/server_access.R` (public URL, RStudio proxy, allowed origins, viewer).
 - The page calls relative `api/...` URLs (works behind the RStudio proxy). The
   token goes in the `X-Pipeworks-Token` header. Route contract: see the
-  header comment of `R/server_api.R`.
+  header comment of `R/server_api.R`. Routes: `api/version`, `api/model`,
+  `api/verdict`, `api/retry`, `api/open`, `api/edit` (apply a change list),
+  `api/undo` (revert a write by `write_id`).
 - Test seams: `rstudio_available()`, `is_gui_session()`, `show_url()`, the
   `open_file` state field. Never open a real browser or editor in tests;
   build state by hand and call `pw_app(state)$call(req)`.

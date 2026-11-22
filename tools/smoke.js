@@ -36,6 +36,7 @@ const click = el => {
 };
 const key = (k, extra = {}) => d.body.dispatchEvent(new w.KeyboardEvent('keydown', { key: k, bubbles: true, ...extra }));
 const wait = ms => new Promise(r => setTimeout(r, ms));
+const openModalOf0 = async id => { d.querySelector(`#nodes .node[data-id="${id}"]`).dispatchEvent(new w.MouseEvent('dblclick', { bubbles: true })); await wait(30); };
 const colour = el => (el.className.match(/mc-\d/) || [''])[0];
 
 (async () => {
@@ -185,6 +186,18 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   click(d.querySelector('#nodes .mpill[data-map="map:model_fit"]'));
   await wait(30);
 
+  // static page: today's wording; the preview indents tag continuation lines like R's rox_lines()
+  await openModalOf0('raw_data');
+  ok(/Writing to files comes with the live connection/.test(d.querySelector('#modal .m-foot').textContent), 'static dialog keeps "Writing to files comes with the live connection"');
+  const pdesc = d.querySelector('#modal textarea[data-p="path"]');
+  pdesc.value = 'Path to the survey CSV export as written by the survey tool, relative to the project root directory.';
+  pdesc.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const prev = d.getElementById('m-preview').textContent.split('\n');
+  const at = prev.findIndex(l => l.startsWith("#' @param path"));
+  ok(at >= 0 && /^#'   \S/.test(prev[at + 1]) && prev[at].length <= 76, `preview: @param continuation indented "#'   ": ${JSON.stringify(prev.slice(at, at + 2))}`);
+  key('Escape');
+  await wait(10);
+
   // remove + undo still work
   const before = nodes();
   click(d.querySelector('#nodes .node[data-id="hist_raw"]'));
@@ -241,7 +254,7 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
     json: async () => (typeof body === 'string' ? JSON.parse(body) : JSON.parse(JSON.stringify(body))),
     text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
   });
-  const fakeFetch = async (url, opts = {}) => {
+  const makeFetch = server => async (url, opts = {}) => {
     await wait(5);
     url = String(url);
     if (url.startsWith('/') || /^https?:/.test(url)) server.absolute++;
@@ -266,8 +279,19 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
       server.bump();
       return reply(200, { ok: true, results: [{ file: 'qa/reviews/x.json', committed: true, error: null }], version: server.model.live.version });
     }
+    if (url === 'api/edit' && method === 'POST') {
+      if (server.delay) await wait(server.delay);
+      if (server.editReply) { const r = server.editReply; server.editReply = null; return reply(r.status, r.body); }
+      server.seq = (server.seq || 0) + 1; server.bump(); server.model.live.building = true;
+      return reply(200, { ok: true, write_id: 'w' + server.seq, version: server.model.live.version, files: server.files || ['R/import.R'], notes: server.notes || [] });
+    }
+    if (url === 'api/undo' && method === 'POST') {
+      server.bump(); server.model.live.building = true;
+      return reply(200, { ok: true, version: server.model.live.version, files: ['R/import.R'] });
+    }
     return reply(404, { error: 'Not found.' });
   };
+  const fakeFetch = makeFetch(server);
   const liveHtml = html.replace(/(<script id="pipeworks-data" type="application\/json">)[\s\S]*?(<\/script>)/,
     (m0, a, b) => a + JSON.stringify(server.model).replace(/</g, '\\u003c') + b);
   const liveErrors = [];
@@ -425,43 +449,26 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   ok(op.length === 1 && op[0].body.item === 'function:clean_survey', `POST api/open ${JSON.stringify(op[0] && op[0].body)}`);
   ok(/open R\/clean\.R:3 yourself/.test(d.getElementById('toast-msg').textContent), 'open error shown as a toast');
 
-  // Build: a refresh is held back while the view has its own changes
+  // Build: a new model is always applied (writes go to the files, the view has no changes of its own)
   key('Escape');
   click(d.getElementById('mode-build'));
   await wait(20);
   const histRaw = () => d.querySelector('#nodes .node[data-id="hist_raw"]');
-  click(histRaw()); key('Delete');
-  await wait(20);
-  ok(!histRaw(), 'Build: a target removed in the view');
   server.model.project = 'survey-v3'; server.bump();
   await nudge();
-  ok(d.querySelector('#banners [data-reload]') && /changes of its own/.test(banners()) && !/survey-v3/.test(d.getElementById('session').textContent), 'Build with view changes: the new model is held back, banner offers to show it');
-  d.querySelector('#banners [data-reload]').click();
-  await wait(30);
-  ok(histRaw() && /survey-v3/.test(d.getElementById('session').textContent) && !d.querySelector('#banners [data-reload]'), 'reload shows the new model and drops the view changes');
-  // Build without view changes, dialog open: the refresh is applied
+  ok(/survey-v3/.test(d.getElementById('session').textContent) && !d.querySelector('#banners [data-reload]'), 'Build: the new model is applied, no hold-back banner');
+  // Build, dialog open: the refresh is applied, the dialog stays
   server.model.project = 'survey-v3b'; server.bump();
   await openModalOf('hist_raw');
+  ok(/Apply writes to your files/.test(d.querySelector('#modal .m-foot').textContent) && !/live connection/.test(d.getElementById('modal').textContent), 'live Build dialog: "Apply writes to your files"');
   await nudge();
-  ok(/survey-v3b/.test(d.getElementById('session').textContent) && !d.getElementById('overlay').hidden, 'Build, open dialog without changes: refresh applied, dialog stays');
+  ok(/survey-v3b/.test(d.getElementById('session').textContent) && !d.getElementById('overlay').hidden, 'Build, open dialog: refresh applied, dialog stays');
   key('Escape');
   await wait(20);
-
-  // Build -> Review with view changes: in-page confirmation
-  click(histRaw()); key('Delete');
-  await wait(20);
-  server.model.project = 'survey-v4'; server.bump();
-  await nudge();
+  // Build -> Review switches at once (no confirmation panel)
   click(d.getElementById('mode-review'));
   await wait(20);
-  const conf = d.getElementById('confirm');
-  ok(conf && !conf.hidden && /Discard 1 view change and switch to Review\?/.test(conf.textContent) && !liveReview(), `Build -> Review with changes asks first: "${conf && conf.querySelector('p')?.textContent}"`);
-  click(d.getElementById('confirm-no'));
-  ok(conf && conf.hidden && !liveReview() && !histRaw(), '"Stay in Build" keeps the changes');
-  click(d.getElementById('mode-review'));
-  click(d.getElementById('confirm-yes'));
-  await wait(80);
-  ok(liveReview() && histRaw() && /survey-v4/.test(d.getElementById('session').textContent), 'discard: Review mode with the latest model');
+  ok(liveReview() && !d.getElementById('confirm') && histRaw(), 'Build -> Review switches without a confirmation');
 
   // R refuses (text/plain 403), then R is gone
   server.refuse = 'Host 127.0.0.1:9999 is not allowed.';
@@ -477,6 +484,275 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
 
   await wait(100);
   ok(liveErrors.length === 0, `live page: no console errors${liveErrors.length ? ':\n' + liveErrors.join('\n') : ''}`);
+  w.close();
+
+  // ---------- Live page, Build mode: actions write through api/edit ----------
+  console.log('\n# live page: writes');
+  const W = {
+    model: { ...JSON.parse(JSON.stringify(model)), live: { ...live0, mode: 'build', version: 1, building: false, uncommitted: [] }, model_error: null },
+    calls: [], badToken: 0, absolute: 0, down: false, refuse: null, open: { ok: true },
+    bump() { this.model.live.version++; },
+  };
+  const htmlOf = m => html.replace(/(<script id="pipeworks-data" type="application\/json">)[\s\S]*?(<\/script>)/,
+    (m0, a, b) => a + JSON.stringify(m).replace(/</g, '\\u003c') + b);
+  const wErrors = [];
+  const wdom = makeDom(htmlOf(W.model), { url: `http://127.0.0.1:7777/?token=${TOKEN}`, fetch: makeFetch(W) }, wErrors);
+  w = wdom.window; d = w.document;
+  await wait(100);
+  const edits = () => W.calls.filter(c => c.url === 'api/edit' && c.method === 'POST');
+  const lastChanges = () => (edits().slice(-1)[0] || { body: { changes: [] } }).body.changes;
+  const fnBase = n => model.functions.find(f => f.name === n).base;
+  const tBase = n => model.targets.find(t => t.name === n).base;
+  const node = id => d.querySelector(`#nodes .node[data-id="${id}"]`);
+  const nodeTitle = id => node(id)?.querySelector('.n-title')?.textContent;
+  const setField = (sel, v) => { const el = d.querySelector(sel); el.value = v; el.dispatchEvent(new w.Event('input', { bubbles: true })); };
+  const apply = async () => { d.querySelector('#modal [data-m="save"]').click(); await wait(60); };
+  const toastText = () => d.getElementById('toast-msg').textContent;
+  // R finishes the background rebuild: building off, a newer version
+  const rebuilt = async mut => { if (mut) mut(W.model); W.model.live.building = false; W.bump(); await nudge(); };
+  ok(!liveReview(), 'live page in Build mode (live.mode)');
+
+  // a new title on raw_data's dialog: exactly one set_doc with the model's base, shown at once
+  await openModalOf('raw_data');
+  setField('#m-title', 'Read the survey export file');
+  d.querySelector('#modal [data-m="save"]').click();
+  await wait(1);
+  ok(nodeTitle('raw_data') === 'Read the survey export file' && node('raw_data').classList.contains('wr'), `optimistic: new title shown at once, box marked .wr (${node('raw_data')?.className})`);
+  await wait(60);
+  const c1 = lastChanges();
+  ok(edits().length === 1 && c1.length === 1 && JSON.stringify(c1[0]) === JSON.stringify({ kind: 'set_doc', item: 'function:read_survey', base: fnBase('read_survey'), fn: 'read_survey', field: 'title', value: 'Read the survey export file' }), `title: one set_doc ${JSON.stringify(c1)}`);
+  ok(/^Written to R\/import\.R\./.test(toastText()) && shown(d.getElementById('toast-act')), `toast "${toastText()}" with Undo`);
+  ok(!$$('.inp.wr, .txt.wr, .select.wr').length, '.wr only on canvas boxes');
+  // the same function again before the rebuilt model: its base is out of date, so nothing is sent
+  await openModalOf('raw_data');
+  setField('#m-desc', 'Second edit too soon');
+  await apply();
+  ok(edits().length === 1 && /Still writing the last change/.test(toastText()) && d.getElementById('m-desc')?.value === 'Second edit too soon' && nodeTitle('raw_data') === 'Read the survey export file', `same item before the rebuild: refused, dialog keeps the text ("${toastText()}")`);
+  key('Escape');
+  await wait(20);
+  // the model of the write itself (building) is not applied; the rebuilt one is
+  await nudge();
+  ok(nodeTitle('raw_data') === 'Read the survey export file', 'a model with building: true keeps the optimistic edit');
+  await rebuilt(m => { m.functions.find(f => f.name === 'read_survey').title = 'Read the survey export file'; m.project = 'survey-w3'; });
+  ok(/survey-w3/.test(d.getElementById('session').textContent) && W.model.live.version === 3 && nodeTitle('raw_data') === 'Read the survey export file' && !node('raw_data').classList.contains('wr'), 'building: false, version 3: the rebuilt model is applied, mark cleared');
+
+  // Undo posts api/undo with the write id
+  click(d.getElementById('btn-undo'));
+  await wait(60);
+  const un = W.calls.filter(c => c.url === 'api/undo');
+  ok(un.length === 1 && JSON.stringify(un[0].body) === JSON.stringify({ write_id: 'w1' }), `undo: POST api/undo ${JSON.stringify(un.map(u => u.body))}`);
+  ok(/^Undone: /.test(toastText()), `undo toast: "${toastText()}"`);
+  await rebuilt(m => { m.functions.find(f => f.name === 'read_survey').title = model.functions.find(f => f.name === 'read_survey').title; });
+
+  // plugging regions into features (drag): set_call, set_formals, set_doc(param regions), in that order
+  const port = d.querySelector('#nodes .port-out[data-port="regions"]'), canvasEl = d.getElementById('canvas');
+  const Ev = w.PointerEvent || w.MouseEvent, pev = { bubbles: true, button: 0, clientX: 1, clientY: 1, pointerId: 1 };
+  d.elementFromPoint = () => node('features');
+  port.dispatchEvent(new Ev('pointerdown', pev));
+  canvasEl.dispatchEvent(new Ev('pointerup', pev));
+  await wait(60);
+  const c2 = lastChanges();
+  ok(edits().length === 2 && c2.map(c => c.kind).join() === 'set_call,set_formals,set_doc', `plug: kinds ${c2.map(c => c.kind).join()}`);
+  ok(c2[0] && c2[0].target === 'features' && c2[0].item === 'target:features' && c2[0].base === tBase('features') && JSON.stringify(c2[0].args) === JSON.stringify([{ name: 'clean_data', value: 'clean_data', named: false }, { name: 'regions', value: 'regions', named: false }]), `plug: set_call ${JSON.stringify(c2[0])}`);
+  ok(c2[1] && c2[1].fn === 'build_features' && c2[1].base === fnBase('build_features') && JSON.stringify(c2[1].formals) === JSON.stringify([{ name: 'clean_data', default: null }, { name: 'regions', default: null }]), `plug: set_formals ${JSON.stringify(c2[1])}`);
+  ok(c2[2] && c2[2].field === 'param' && c2[2].param === 'regions' && c2[2].value === 'Regions present after cleaning.' && c2[2].item === 'function:build_features', `plug: set_doc ${JSON.stringify(c2[2])}`);
+  await rebuilt();
+
+  // renaming target clean_data: rename_target only, no set_call for its users
+  await openModalOf('clean_data');
+  setField('#m-name', 'clean_responses');
+  await apply();
+  const c3 = lastChanges();
+  ok(c3.length === 1 && JSON.stringify(c3[0]) === JSON.stringify({ kind: 'rename_target', item: 'target:clean_data', base: tBase('clean_data'), target: 'clean_data', to: 'clean_responses' }), `rename target: ${JSON.stringify(c3)}`);
+  await rebuilt();
+
+  // a map variant's function title: one change for function fit_score_model
+  click(d.querySelector('#nodes .mpill[data-map="map:model_fit"]'));
+  await wait(30);
+  await openModalOf('model_fit_full');
+  setField('#m-title', 'Fit the score model');
+  await apply();
+  const c4 = lastChanges();
+  ok(c4.length === 1 && c4[0].kind === 'set_doc' && c4[0].fn === 'fit_score_model' && c4[0].item === 'function:fit_score_model' && c4[0].base === fnBase('fit_score_model'), `variant function title: ${JSON.stringify(c4)}`);
+  await rebuilt();
+
+  // a variant's target argument goes to its template
+  await openModalOf('model_fit_full');
+  setField('#m-pattern', 'map(features)');
+  await apply();
+  const c5 = lastChanges();
+  ok(c5.length === 1 && JSON.stringify(c5[0]) === JSON.stringify({ kind: 'set_target_arg', item: 'target:model_fit', base: tBase('model_fit_full'), target: 'model_fit', arg: 'pattern', value: 'map(features)' }), `variant pattern -> template: ${JSON.stringify(c5)}`);
+  await rebuilt();
+
+  // R refuses (409): the last model comes back, the message is shown, the dialog keeps the user's text
+  const oldTitle = nodeTitle('clean_data');
+  W.editReply = { status: 409, body: { error: 'function:clean_survey in R/import.R changed since the page loaded it. The view is refreshed; try again.', item: 'function:clean_survey', file: 'R/import.R' } };
+  await openModalOf('clean_data');
+  setField('#m-title', 'My unsaved title');
+  await apply();
+  ok(nodeTitle('clean_data') === oldTitle && !node('clean_data').classList.contains('wr'), `409: previous title back on the canvas ("${nodeTitle('clean_data')}")`);
+  ok(/changed since the page loaded it/.test(toastText()), `409: message shown: "${toastText()}"`);
+  ok(!d.getElementById('overlay').hidden && d.getElementById('m-title')?.value === 'My unsaved title', '409: dialog stays open with the user\'s text');
+  key('Escape');
+  await wait(20);
+
+  // one write at a time
+  W.delay = 150;
+  click(node('hist_raw')); key('Delete');
+  await wait(20);
+  ok(!node('hist_raw'), 'remove: hist_raw gone at once');
+  click(node('hist_clean')); key('Delete');
+  await wait(20);
+  ok(node('hist_clean') && /Still writing the last change/.test(toastText()), `a second action while writing is refused: "${toastText()}"`);
+  await wait(200);
+  W.delay = 0;
+  const c6 = lastChanges();
+  ok(c6.length === 1 && JSON.stringify(c6[0]) === JSON.stringify({ kind: 'remove_target', item: 'target:hist_raw', base: tBase('hist_raw'), target: 'hist_raw' }), `remove: ${JSON.stringify(c6)}`);
+  ok(!/unused/.test(toastText()), `shared function still used: no hint ("${toastText()}")`);
+  await rebuilt();
+
+  // removing the last target of a function: hint that it is unused
+  click(node('channel_counts')); key('Delete');
+  await wait(60);
+  ok(/count_by_channel\(\) is now unused\./.test(toastText()), `unused hint: "${toastText()}"`);
+  await rebuilt();
+
+  // removing a target used downstream: set_call for its users first, then remove_target
+  click(node('raw_file')); key('Delete');
+  await wait(60);
+  const c7 = lastChanges();
+  ok(c7.map(c => c.kind).join() === 'set_call,remove_target' && c7[0].target === 'raw_data' && JSON.stringify(c7[0].args) === '[]', `remove used target: ${JSON.stringify(c7)}`);
+  await rebuilt();
+
+  // a new target: add_target without item/base
+  d.getElementById('btn-add').click();
+  await wait(40);
+  setField('#m-name', 'extra_step');
+  await apply();
+  const c8 = lastChanges();
+  ok(c8.length === 1 && c8[0].kind === 'add_target' && c8[0].target === 'extra_step' && c8[0].block === 'R/new_target.R' && c8[0].fn && c8[0].fn.name === 'make_extra_step' && c8[0].format === null && c8[0].pattern === null && !('item' in c8[0]) && !('base' in c8[0]), `add target: ${JSON.stringify(c8)}`);
+  await rebuilt();
+
+  // a new target's file must stay a plain R/<name>.R: refused in the dialog, nothing sent
+  const nEdF = edits().length;
+  d.getElementById('btn-add').click();
+  await wait(40);
+  setField('#m-name', 'outside_step');
+  for (const bad of ['R/../outside.R', '_targets.R', 'R/./a.R', 'R\\a.R', 'R//a.R']) {
+    setField('#m-file', bad);
+    await apply();
+    const errBox = d.getElementById('m-err');
+    ok(edits().length === nEdF && errBox && !errBox.hidden && /R\/<name>\.R/.test(errBox.textContent) && !d.getElementById('overlay').hidden, `new target file "${bad}": refused in the dialog ("${errBox?.textContent}")`);
+    if (!errBox) break;
+  }
+  key('Escape');
+  await wait(20);
+
+  // an item without a base (R could not locate it in the files): refused locally, nothing sent
+  await rebuilt(m => { m.functions.find(x => x.name === 'clean_survey').base = null; });
+  const nEdB = edits().length, titleB = nodeTitle('clean_data');
+  await openModalOf('clean_data');
+  setField('#m-title', 'No base here');
+  await apply();
+  ok(edits().length === nEdB && /function:clean_survey/.test(toastText()) && /RStudio/.test(toastText()) && nodeTitle('clean_data') === titleB, `base null: refused locally ("${toastText()}")`);
+  key('Escape');
+  await wait(20);
+  await rebuilt(m => { m.functions.find(x => x.name === 'clean_survey').base = fnBase('clean_survey'); });
+
+  // ---- review round: variants, numeric maps, open dialog follows the files, hold path ----
+  // removing one unfolded variant removes its template: every variant goes, and the toast says so
+  click(d.querySelector('#nodes .mpill[data-map="map:area_data+area_hist"]'));
+  await wait(30);
+  click(node('area_hist_urban')); key('Delete');
+  await wait(1);
+  ok(!node('area_hist_urban') && !node('area_hist_rural') && node('area_data_urban'), 'remove a variant: all variants of its template go at once');
+  await wait(60);
+  const c9 = lastChanges();
+  ok(c9.length === 1 && JSON.stringify(c9[0]) === JSON.stringify({ kind: 'remove_target', item: 'target:area_hist', base: tBase('area_hist_urban'), target: 'area_hist' }), `remove variant -> template: ${JSON.stringify(c9)}`);
+  ok(/Removed area_hist \(2 variants\)\./.test(toastText()) && /area_histogram\(\) is now unused\./.test(toastText()), `variant removal toast: "${toastText()}"`);
+  await rebuilt();
+
+  // a variant argument that cannot be mapped back to the template (numeric map values): refused, nothing sent
+  await rebuilt(m => { m.targets.find(t => t.name === 'model_fit_base').args[1].value = '1'; m.targets.find(t => t.name === 'model_fit_full').args[1].value = '2'; });
+  const nEd = edits().length;
+  await openModalOf('model_fit_full');
+  const plugSel = d.getElementById('m-plug');
+  plugSel.value = 'raw_file'; plugSel.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await apply();
+  ok(edits().length === nEd && /model_fit_full is a variant of model_fit; change its arguments in RStudio\./.test(toastText()), `numeric map value: refused locally ("${toastText()}")`);
+  key('Escape');
+  await wait(20);
+  await rebuilt(m => { m.targets.find(t => t.name === 'model_fit_base').args[1].value = '"base"'; m.targets.find(t => t.name === 'model_fit_full').args[1].value = '"full"'; });
+
+  // the open dialog follows a file change: untouched fields update, typed text stays, a notice, Apply sends only the edit
+  await openModalOf('clean_data');
+  setField('#m-desc', 'Typed while RStudio saved');
+  await rebuilt(m => { const f = m.functions.find(x => x.name === 'clean_survey'); f.title = 'Clean responses (edited in RStudio)'; f.base = 'base-after-rstudio'; });
+  ok(d.getElementById('m-title')?.value === 'Clean responses (edited in RStudio)' && d.getElementById('m-desc')?.value === 'Typed while RStudio saved', `dialog: new title taken, typed description kept ("${d.getElementById('m-title')?.value}")`);
+  ok(/function:clean_survey changed in your files since you opened this dialog\. Your edits are kept; untouched fields were updated\./.test(d.getElementById('m-notice')?.textContent || ''), `dialog notice: "${d.getElementById('m-notice')?.textContent}"`);
+  await apply();
+  const c10 = lastChanges();
+  ok(c10.length === 1 && JSON.stringify(c10[0]) === JSON.stringify({ kind: 'set_doc', item: 'function:clean_survey', base: 'base-after-rstudio', fn: 'clean_survey', field: 'description', value: 'Typed while RStudio saved' }), `Apply after the merge: only set_doc(description), new base ${JSON.stringify(c10)}`);
+  await rebuilt(m => { m.functions.find(x => x.name === 'clean_survey').description = 'Typed while RStudio saved'; });
+
+  // two params: the user touches one, the files change the other -> Apply sends only the touched one
+  await openModalOf('region_summary');
+  setField('#modal textarea[data-p="data"]', 'Clean responses, one row per respondent.');
+  await rebuilt(m => { const f = m.functions.find(x => x.name === 'summarise_region'); f.params.region = 'A region code (edited in RStudio).'; f.base = 'sr-base-2'; });
+  ok(d.querySelector('#modal textarea[data-p="region"]')?.value === 'A region code (edited in RStudio).' && d.querySelector('#modal textarea[data-p="data"]')?.value === 'Clean responses, one row per respondent.', 'dialog: the untouched param takes the file value, the touched one keeps the text');
+  await apply();
+  const c11 = lastChanges();
+  ok(c11.length === 1 && c11[0].kind === 'set_doc' && c11[0].field === 'param' && c11[0].param === 'data' && c11[0].base === 'sr-base-2', `two params: only the touched one is sent ${JSON.stringify(c11)}`);
+  await rebuilt();
+
+  // held model (building): its model_error still shows
+  await openModalOf('hist_clean');
+  setField('#m-title', 'Histogram of clean scores');
+  await apply();
+  W.model.model_error = 'Error in tar_target(): broken on purpose';
+  await nudge();
+  ok(nodeTitle('hist_clean') === 'Histogram of clean scores' && /broken on purpose/.test(banners()), 'held model (building): optimistic edit kept, its model_error shown');
+  W.model.model_error = null;
+  await rebuilt();
+
+  // a variant's target argument: a different variant of the same map is refused, nothing sent
+  const drag = (fromId, toId) => {
+    d.elementFromPoint = () => node(toId);
+    d.querySelector(`#nodes .port-out[data-port="${fromId}"]`).dispatchEvent(new Ev('pointerdown', pev));
+    canvasEl.dispatchEvent(new Ev('pointerup', pev));
+  };
+  const edgeShown = (a, b) => !!d.querySelector(`#edges [data-edge="${a}>${b}"]`);
+  const nEd2 = edits().length;
+  drag('area_data_urban', 'area_hist_rural');
+  await wait(60);
+  ok(edits().length === nEd2 && /area_hist_rural is a variant of area_hist; change its arguments in RStudio\./.test(toastText()) && !edgeShown('area_data_urban', 'area_hist_rural') && edgeShown('area_data_urban', 'area_hist_urban'), `other variant into a variant: refused locally ("${toastText()}")`);
+  // a plain target into one variant: one set_call for the template, the edge on every variant
+  drag('regions', 'area_hist_urban');
+  await wait(1);
+  ok(edgeShown('regions', 'area_hist_urban') && edgeShown('regions', 'area_hist_rural'), 'plain target into a variant: the edge shown on every variant');
+  await wait(60);
+  const c12 = lastChanges(), calls12 = c12.filter(c => c.kind === 'set_call');
+  ok(calls12.length === 1 && calls12[0].target === 'area_hist' && JSON.stringify(calls12[0].args) === JSON.stringify([{ name: 'data', value: 'area_data', named: false }, { name: 'area', value: 'area', named: false }, { name: 'regions', value: 'regions', named: false }]), `plain target into a variant: one set_call for the template ${JSON.stringify(calls12)}`);
+  ok(/Plugged regions into area_hist \(2 variants\)\./.test(toastText()), `plug toast: "${toastText()}"`);
+  await rebuilt();
+
+  // a param the user edited but the files deleted is kept, with the notice
+  await openModalOf('region_summary');
+  setField('#modal textarea[data-p="region"]', 'My region text');
+  await rebuilt(m => { const f = m.functions.find(x => x.name === 'summarise_region'); delete f.params.region; f.base = 'sr-base-3'; });
+  ok(d.querySelector('#modal textarea[data-p="region"]')?.value === 'My region text' && /function:summarise_region changed in your files/.test(d.getElementById('m-notice')?.textContent || ''), 'dialog: an edited param deleted in the files is kept, notice shown');
+  key('Escape');
+  await wait(20);
+  await rebuilt(m => { m.functions.find(x => x.name === 'summarise_region').params.region = 'A single region code.'; });
+
+  // a factory target's description is never written: read-only on the live page
+  await openModalOf('report');
+  ok(d.getElementById('m-desc')?.readOnly, 'live: factory description read-only');
+  key('Escape');
+  await wait(20);
+
+  await wait(100);
+  ok(wErrors.length === 0, `write page: no console errors${wErrors.length ? ':\n' + wErrors.join('\n') : ''}`);
   console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
   w.close();
   process.exit(failed ? 1 : 0);

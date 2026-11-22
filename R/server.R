@@ -1,8 +1,8 @@
 # The live server behind `pipeworks()`: an httpuv server inside the R session
 # (the console stays free), one per project, with a small JSON API for
 # verdicts, retries and "open in RStudio", and a watcher that refreshes the
-# model when project files change. The browser never writes files: every
-# write goes through `record_verdict()`.
+# model when project files change. The browser writes files only through
+# `record_verdict()` (reviews) and `apply_changes()` (code).
 
 # Running servers by normalised project path.
 pw_servers <- new.env(parent = emptyenv())
@@ -26,6 +26,8 @@ pw_state <- function(path, model = NULL, mode = "auto", port = NA_integer_, toke
   state$open_file <- open_file
   state$version <- 1L
   state$bg <- NULL
+  state$writes <- new.env(parent = emptyenv())
+  state$write_seq <- 0L
   state$server <- NULL
   state$alive <- TRUE
   state$hosts <- character()
@@ -267,6 +269,7 @@ pw_poll_bg <- function(state) {
   info <- tryCatch(bg$get_result(), error = function(e) e)
   if (inherits(info, "error")) {
     state$model_error <- pw_error_message(info)
+    pw_refresh_bases(state)
     return(TRUE)
   }
   items <- pw_read_items(state$path)
@@ -277,6 +280,7 @@ pw_poll_bg <- function(state) {
   res <- tryCatch(pw_quietly(assemble_model(state$path, info)), error = function(e) e)
   if (inherits(res, "error")) {
     state$model_error <- pw_error_message(res)
+    pw_refresh_bases(state)
     return(TRUE)
   }
   state$model <- pw_mark_self(res$value, state$path, items)
@@ -284,6 +288,17 @@ pw_poll_bg <- function(state) {
   state$model_error <- NULL
   state$qa_error <- NULL
   TRUE
+}
+
+# The structure could not be rebuilt and the last model stays: its bases are
+# recomputed from the files (static), so an edit written since does not make
+# every further edit of that item stale. Never throws.
+pw_refresh_bases <- function(state) {
+  items <- pw_read_items(state$path)
+  if (inherits(items, "error") || is.null(state$model)) return(invisible(state))
+  model <- tryCatch(attach_bases(state$model, state$path, items), error = function(e) NULL)
+  if (!is.null(model)) state$model <- model
+  invisible(state)
 }
 
 # The innermost message of a (callr-wrapped) error.
@@ -349,6 +364,7 @@ pw_live <- function(state) {
   unc <- uncommitted_reviews(state$path)
   list(
     version = state$version,
+    building = !is.null(state$bg),
     mode = state$mode,
     base = state$model$qa_summary$base,
     can_record = rec$ok,

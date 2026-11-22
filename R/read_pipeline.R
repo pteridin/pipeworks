@@ -105,6 +105,7 @@ assemble_model <- function(path, info) {
       branches = if (!is.na(row$pattern) && row$name %in% names(branches)) branches[[row$name]] else NULL,
       block = placed$block[[i]],
       map = placed$map[[i]],
+      base = NULL,
       qa = NULL,
       qa_file = NULL
     )
@@ -127,7 +128,44 @@ assemble_model <- function(path, info) {
     qa_summary = NULL,
     files = read_source_files(targets)
   )
+  model <- attach_bases(model, ".", items)
   attach_qa(structure(model, class = "pipeworks_model"), ".", items)
+}
+
+# `base` of every function and target: hash of the item's raw lines, checked
+# before a write-back (same range as the stale check: `wb_item_base()`). Each
+# file is parsed once. Static, so the live server also refreshes the bases of
+# a kept model when the rebuild fails. A function's file comes from the
+# source items (it may have moved since the model was read).
+attach_bases <- function(model, path, items) {
+  cache <- list()
+  parsed <- function(file) {
+    if (is.null(cache[[file]])) {
+      cache[[file]] <<- list(tryCatch(wb_parse(read_text(file.path(path, file))$lines, file), error = function(e) NULL))
+    }
+    cache[[file]][[1]]
+  }
+  base_in <- function(file, item) {
+    if (is.null(file) || is.na(file)) return(NULL)
+    p <- parsed(file)
+    b <- if (is.null(p)) NA_character_ else wb_item_base(p, item)
+    if (is.na(b)) NULL else b
+  }
+  file_of <- function(id) {
+    if (is.null(items)) return(NULL)
+    f <- items$file[items$id == id]
+    if (length(f)) f[1] else NULL
+  }
+  for (i in seq_along(model$functions)) {
+    id <- paste0("function:", model$functions[[i]]$name)
+    model$functions[[i]]["base"] <- list(base_in(file_of(id) %||% model$functions[[i]]$file, id))
+  }
+  for (i in seq_along(model$targets)) {
+    t <- model$targets[[i]]
+    id <- target_item(t$name, t$map)
+    model$targets[[i]]["base"] <- list(base_in(file_of(id), id))
+  }
+  model
 }
 
 # (Re)attach the review status to `model`: `qa` of every target, function and
@@ -360,7 +398,7 @@ item_texts <- function(items, lines_of, ids) {
 read_source_files <- function(targets) {
   r_files <- list.files("R", pattern = "\\.[Rr]$", recursive = TRUE, all.files = TRUE)
   paths <- c("_targets.R", file.path("R", sort(r_files, method = "radix")))
-  sources <- unlist(lapply(targets, function(t) t$source))
+  sources <- as.character(unlist(lapply(targets, function(t) t$source)))
   paths <- unique(c(paths, sources[file.exists(sources)]))
   lapply(paths, function(p) list(path = p, text = paste(readLines(p, warn = FALSE, encoding = "UTF-8"), collapse = "\n")))
 }

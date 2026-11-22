@@ -176,3 +176,15 @@ test_that("in a git repository targets and functions carry their QA status", {
 test_that("a folder without _targets.R is an error", {
   expect_error(read_pipeline(withr::local_tempdir()), "No _targets.R")
 })
+
+test_that("functions and targets carry a base hash of their raw lines", {
+  skip_if_no_targets()
+  m <- read_example()
+  f <- by_name(m$functions, "read_survey")
+  lines <- read_utf8(file.path(m$root, f$file))
+  expect_equal(f$base, wb_base_of(m$root, "function:read_survey"))
+  expect_equal(by_name(m$targets, "model_fit_full")$base, by_name(m$targets, "model_fit_base")$base)
+  with_item <- Filter(function(t) !is.null(t$block), m$targets)
+  expect_gt(length(with_item), 0)
+  expect_true(all(vapply(with_item, function(t) nchar(t$base) == 32L, logical(1))))
+})

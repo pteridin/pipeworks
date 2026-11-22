@@ -34,8 +34,10 @@ The page stays connected to R: it refreshes by itself when files in \verb{R/},
 \verb{_targets.R}, the report sources, \verb{qa/} or the git branch change (the
 review status at once, the pipeline structure in a background process),
 records verdicts like \code{\link[=qa_review]{qa_review()}} (each one committed on its own), and
-opens items in RStudio. Edits of the pipeline made in the editor are not
-written back yet.
+opens items in RStudio. In Build mode every change (roxygen, function
+signatures and bodies, targets, wiring, renames) is written to the project
+files right away, all or none; nothing is committed, and Undo reverts the
+last write while the files are untouched since.
 
 The server listens on \verb{127.0.0.1} only and answers only requests that carry
 its random token. There is one server per project: calling \code{pipeworks()}
