@@ -566,3 +566,52 @@ test_that("only the newest 100 undo records are kept", {
   expect_false(exists("w1", envir = state$writes))
   expect_true(exists("w101", envir = state$writes))
 })
+
+test_that("a failing refresh after a write still answers with the write id", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  local_mocked_bindings(pw_start_bg = function(state) stop("cannot start R"))
+  v0 <- state$version
+  res <- call_app(state, method = "POST", path = "/api/edit", body = edit_title(repo))
+  expect_equal(res$status, 200L)
+  expect_equal(res$json$write_id, "w1")
+  expect_equal(readLines(file.path(repo, "R/import.R"))[1], "#' X")
+  expect_match(state$model_error, "cannot start R")
+  expect_true(state$version > v0)
+  expect_true(exists("w1", envir = state$writes))
+  # undo too
+  res <- call_app(state, method = "POST", path = "/api/undo", body = list(write_id = "w1"))
+  expect_equal(res$status, 200L)
+})
+
+test_that("a failed rebuild after a write refreshes the bases of the kept model", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  local_fake_bg()
+  call_app(state, method = "POST", path = "/api/edit", body = edit_title(repo))
+  state$bg <- list(is_alive = function() FALSE, get_result = function() stop("broken on purpose"))
+  pw_poll_bg(state)
+  expect_match(state$model_error, "broken on purpose")
+  fb <- by_name(state$model$functions, "read_survey")$base
+  expect_equal(fb, wb_base_of(repo, "function:read_survey"))
+  expect_equal(by_name(state$model$targets, "raw_data")$base, wb_base_of(repo, "target:raw_data"))
+  # the next edit of the same function goes through with the kept model's base
+  body <- list(changes = list(list(kind = "set_doc", item = "function:read_survey", base = fb,
+    fn = "read_survey", field = "title", value = "Y")))
+  expect_equal(call_app(state, method = "POST", path = "/api/edit", body = body)$status, 200L)
+})
+
+test_that("a stale write does not promise a refresh while the model cannot be rebuilt", {
+  repo <- local_example_repo()
+  state <- local_state(repo)
+  local_fake_bg()
+  stale <- edit_title(repo)
+  stale$changes[[1]]$base <- "0"
+  expect_match(call_app(state, method = "POST", path = "/api/edit", body = stale)$json$error, "The view is refreshed")
+  state$model_error <- "broken on purpose"
+  res <- call_app(state, method = "POST", path = "/api/edit", body = stale)
+  expect_equal(res$status, 409L)
+  expect_no_match(res$json$error, "refreshed")
+  expect_match(res$json$error, "changed since the page loaded it", fixed = TRUE)
+  expect_match(res$json$error, "Undo", fixed = TRUE)
+})

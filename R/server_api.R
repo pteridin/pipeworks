@@ -8,7 +8,9 @@
 #   POST /api/open      {item} -> open its file at its line
 #   POST /api/edit      {changes} -> apply_changes(); 200 {ok, write_id, version,
 #                       files, notes}; 400 {error} (bad change, no changes);
-#                       409 {error, item, file} (stale base)
+#                       409 {error, item, file} (stale base). Once the files
+#                       are written the answer is 200 even if the refresh
+#                       fails (that goes to `model_error`).
 #   POST /api/undo      {write_id} -> undo_changes(); 200 {ok, version, files};
 #                       404 unknown id; 409 {error} when a file changed since
 #
@@ -115,7 +117,13 @@ pw_api_edit <- function(state, body) {
   pw_save_buffers()
   res <- tryCatch(apply_changes(state$path, unname(changes)), error = function(e) e)
   if (inherits(res, "pipeworks_stale")) {
-    return(pw_json(list(error = conditionMessage(res), item = res$item, file = res$file), 409L))
+    msg <- conditionMessage(res)
+    # a failed rebuild keeps the last model: the view will not refresh
+    if (!is.null(state$model_error) && !is.null(res$reason)) {
+      msg <- paste(res$reason, "The pipeline does not build right now (see the error above), so the view",
+        "cannot refresh: fix the error in RStudio or Undo your last change.")
+    }
+    return(pw_json(list(error = msg, item = res$item, file = res$file), 409L))
   }
   if (inherits(res, "pipeworks_bad_change")) return(pw_json(list(error = conditionMessage(res)), 400L))
   if (inherits(res, "error")) return(pw_json(list(error = conditionMessage(res)), 500L))
@@ -166,10 +174,20 @@ pw_save_buffers <- function() {
 # A code write changed the sources: refresh the review status now, start the
 # structure rebuild and take the code group into the fingerprint so the
 # watcher does not start a second one. The page sees the new version at once.
+# Never throws (the files are written already): a failure goes to
+# `model_error`, the kept model gets fresh bases, and the fingerprint stays
+# so the watcher tries the rebuild again.
 pw_refresh_after_code_write <- function(state) {
-  pw_refresh_qa(state)
-  pw_start_bg(state)
-  state$fingerprint$code <- pw_fingerprint(state)$code
+  ok <- tryCatch({
+    pw_refresh_qa(state)
+    pw_start_bg(state)
+    TRUE
+  }, error = function(e) {
+    state$model_error <- paste("The files were written, but the view could not be rebuilt:", conditionMessage(e))
+    pw_refresh_bases(state)
+    FALSE
+  })
+  if (ok) state$fingerprint$code <- pw_fingerprint(state)$code
   state$version <- state$version + 1L
   invisible(state)
 }

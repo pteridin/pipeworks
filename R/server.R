@@ -269,6 +269,7 @@ pw_poll_bg <- function(state) {
   info <- tryCatch(bg$get_result(), error = function(e) e)
   if (inherits(info, "error")) {
     state$model_error <- pw_error_message(info)
+    pw_refresh_bases(state)
     return(TRUE)
   }
   items <- pw_read_items(state$path)
@@ -279,6 +280,7 @@ pw_poll_bg <- function(state) {
   res <- tryCatch(pw_quietly(assemble_model(state$path, info)), error = function(e) e)
   if (inherits(res, "error")) {
     state$model_error <- pw_error_message(res)
+    pw_refresh_bases(state)
     return(TRUE)
   }
   state$model <- pw_mark_self(res$value, state$path, items)
@@ -286,6 +288,17 @@ pw_poll_bg <- function(state) {
   state$model_error <- NULL
   state$qa_error <- NULL
   TRUE
+}
+
+# The structure could not be rebuilt and the last model stays: its bases are
+# recomputed from the files (static), so an edit written since does not make
+# every further edit of that item stale. Never throws.
+pw_refresh_bases <- function(state) {
+  items <- pw_read_items(state$path)
+  if (inherits(items, "error") || is.null(state$model)) return(invisible(state))
+  model <- tryCatch(attach_bases(state$model, state$path, items), error = function(e) NULL)
+  if (!is.null(model)) state$model <- model
+  invisible(state)
 }
 
 # The innermost message of a (callr-wrapped) error.
