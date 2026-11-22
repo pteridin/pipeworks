@@ -24,29 +24,39 @@ wb_rels <- function(files) {
   sort(unique(rels))
 }
 
-wb_find <- function(files, locate) {
+# Search all files. `count(p)` is how many definitions file `p` holds; more
+# than one in total is refused rather than editing the first.
+wb_find <- function(files, locate, count, what) {
   err <- NULL
+  found <- NULL
+  n <- 0L
   for (rel in wb_rels(files)) {
     p <- tryCatch(wb_parse(wb_files_get(files, rel)$lines, rel), error = function(e) {
       if (is.null(err)) err <<- conditionMessage(e)
       NULL
     })
     if (is.null(p)) next
-    hit <- locate(p)
-    if (!is.null(hit)) return(list(rel = rel, p = p, hit = hit))
+    k <- count(p)
+    if (k > 0L && is.null(found)) found <- list(rel = rel, p = p, hit = locate(p))
+    n <- n + k
   }
-  if (!is.null(err)) wb_bad(err)
-  NULL
+  if (n > 1L) wb_bad(sprintf("%s is defined %d times; change it in RStudio.", what, n))
+  if (is.null(found) && !is.null(err)) wb_bad(err)
+  found
 }
 
 wb_find_function <- function(files, name) {
-  r <- wb_find(files, function(p) wb_function(p, name))
+  r <- wb_find(files, function(p) wb_function(p, name), function(p) wb_n_functions(p, name),
+    sprintf("Function %s()", name))
   if (is.null(r)) wb_bad(sprintf("Function %s() not found.", name))
   list(rel = r$rel, p = r$p, f = r$hit)
 }
 
+wb_n_targets <- function(p, name) sum(vapply(wb_targets(p), function(t) identical(t$name, name), logical(1)))
+
 wb_find_target <- function(files, name) {
-  r <- wb_find(files, function(p) wb_target(p, name))
+  r <- wb_find(files, function(p) wb_target(p, name), function(p) wb_n_targets(p, name),
+    sprintf("Target %s", name))
   if (is.null(r)) wb_bad(sprintf("Target %s not found.", name))
   list(rel = r$rel, p = r$p, t = r$hit)
 }
@@ -337,4 +347,300 @@ chg_set_call <- function(files, ch) {
     add <- vapply(ch$args[!kept], text, character(1))
     list(remove = which(!keep_src), replace = replace, add = add)
   })
+}
+
+# --- renames, removal, new targets --------------------------------------------
+
+wb_note <- function(files, text) {
+  attr(files, "notes") <- c(attr(files, "notes"), text)
+  files
+}
+
+# Every file, parsed. A rename has to see all of them, so a file that does not
+# parse is refused.
+wb_parse_all <- function(files) {
+  rels <- wb_rels(files)
+  out <- lapply(rels, function(rel) {
+    tryCatch(wb_parse(wb_files_get(files, rel)$lines, rel), error = function(e) wb_bad(conditionMessage(e)))
+  })
+  stats::setNames(out, rels)
+}
+
+wb_check_name <- function(x, what = "name") {
+  if (!is.character(x) || length(x) != 1L || is.na(x) || !nzchar(x) || make.names(x) != x) {
+    wb_bad(sprintf("%s is not a valid %s.", if (is.character(x) && length(x) == 1L) x else "This", what))
+  }
+}
+
+# Refuse `to` when a function or target of that name exists.
+wb_check_free <- function(parsed, to) {
+  for (rel in names(parsed)) {
+    if (wb_n_functions(parsed[[rel]], to)) wb_bad(sprintf("%s is already a function in %s.", to, rel))
+    if (wb_n_targets(parsed[[rel]], to)) wb_bad(sprintf("%s is already a target in %s.", to, rel))
+  }
+}
+
+# Replace one SYMBOL / STR_CONST token by `to` (a string keeps its quotes).
+wb_token_edit <- function(row, to) {
+  text <- if (row$token == "STR_CONST") paste0(substr(row$text, 1L, 1L), to, substr(row$text, 1L, 1L)) else to
+  wb_edit(row$line1, row$col1, row$line2, row$col2, text)
+}
+
+wb_token_edits <- function(rows, to) {
+  do.call(wb_edits, lapply(seq_len(nrow(rows)), function(i) wb_token_edit(rows[i, ], to)))
+}
+
+wb_parent <- function(p, id) p$pd$parent[p$pd$id == id]
+
+# Source lines of the report sources: the static `path` of every
+# `tar_render()` / `tar_quarto()` call, as a named list path -> lines.
+wb_reports <- function(files, parsed) {
+  root <- attr(files, "root")
+  out <- list()
+  for (p in parsed) {
+    for (t in wb_targets(p)) {
+      if (!t$fn %in% c("tar_render", "tar_quarto")) next
+      i <- which(t$args$name == "path")
+      if (!length(i)) i <- setdiff(which(t$args$name == ""), t$name_arg)
+      if (!length(i)) next
+      path <- tryCatch(str2lang(t$args$text[i[1]]), error = function(e) NULL)
+      if (!is.character(path) || length(path) != 1L) next
+      full <- file.path(root, path)
+      lines <- if (!is.null(files[[path]])) files[[path]]$lines else if (file.exists(full) && !dir.exists(full)) read_utf8(full)
+      if (length(lines)) out[[path]] <- lines
+    }
+  }
+  out
+}
+
+# Refuse when a report reads a target by `tar_read()` / `tar_load()` matching
+# `rx` (the one regex over raw text: it only reads).
+wb_check_reports <- function(reports, rx, msg) {
+  for (path in names(reports)) {
+    if (any(grepl(rx, reports[[path]], perl = TRUE))) wb_bad(sprintf(msg, path))
+  }
+}
+
+wb_rx_escape <- function(x) gsub("([.\\\\|()\\[\\]{}^$*+?])", "\\\\\\1", x, perl = TRUE)
+
+# Number of templates of the `tar_map()` call `id`: each target call counts
+# one, each holder symbol its number of elements.
+wb_map_templates <- function(parsed, p, id) {
+  args <- wb_call_args(p, id)$args
+  n <- 0L
+  for (i in which(args$name == "")) {
+    if (is.na(args$id[i])) next
+    if (wb_callee(p, args$id[i]) %in% TARGET_CALLS) {
+      n <- n + 1L
+      next
+    }
+    for (q in parsed) {
+      bl <- wb_block_list(q, args$text[i])
+      if (!is.null(bl)) {
+        n <- n + nrow(bl$args)
+        break
+      }
+    }
+  }
+  n
+}
+
+# The `tar_map()` target `t` (in file `rel`) is a template of: directly inside
+# it, or an element of a holder `x <- list(...)` that a map names by symbol.
+# Returns NULL or list(n = number of templates, exclude = rel -> token ids of
+# the map and the holder).
+wb_map_of <- function(parsed, rel, t) {
+  p <- parsed[[rel]]
+  id <- t$id
+  repeat {
+    id <- wb_parent(p, id)
+    if (!length(id) || id == 0L) break
+    if (identical(wb_callee(p, id), "tar_map")) {
+      return(list(n = wb_map_templates(parsed, p, id), exclude = stats::setNames(list(parse_descendants(p$kids, id)), rel)))
+    }
+  }
+  container <- wb_parent(p, t$id)
+  holder <- NULL
+  for (a_id in wb_tops(p)$id) {
+    k <- wb_children(p, a_id)
+    if (nrow(k) == 3L && k$token[2] %in% c("LEFT_ASSIGN", "EQ_ASSIGN") && k$id[3] == container &&
+        identical(wb_callee(p, container), "list")) {
+      lhs <- wb_children(p, k$id[1])
+      if (nrow(lhs) == 1L) holder <- list(name = gsub("^[\"'`]|[\"'`]$", "", lhs$text), id = a_id)
+    }
+  }
+  if (is.null(holder)) return(NULL)
+  for (mrel in names(parsed)) {
+    q <- parsed[[mrel]]
+    calls <- q$pd$id[q$pd$token == "SYMBOL_FUNCTION_CALL" & q$pd$text == "tar_map"]
+    for (s in calls) {
+      map_id <- wb_parent(q, wb_parent(q, s))
+      args <- wb_call_args(q, map_id)$args
+      if (!holder$name %in% args$text[args$name == ""]) next
+      exclude <- list()
+      exclude[[mrel]] <- parse_descendants(q$kids, map_id)
+      exclude[[rel]] <- c(exclude[[rel]], parse_descendants(p$kids, holder$id))
+      return(list(n = wb_map_templates(parsed, q, map_id), exclude = exclude))
+    }
+  }
+  NULL
+}
+
+chg_rename_function <- function(files, ch) {
+  fn <- ch$fn
+  to <- ch$to
+  wb_check_name(to, "function name")
+  r <- wb_find_function(files, fn)
+  parsed <- wb_parse_all(files)
+  wb_check_free(parsed, to)
+  n <- 0L
+  for (rel in names(parsed)) {
+    p <- parsed[[rel]]
+    pd <- p$pd
+    calls <- pd[pd$token == "SYMBOL_FUNCTION_CALL" & pd$text == fn, , drop = FALSE]
+    calls <- calls[!calls$parent %in% pd$parent[pd$token %in% c("NS_GET", "NS_GET_INT")], , drop = FALSE]
+    n <- n + nrow(calls)
+    rows <- calls
+    if (rel == r$rel) rows <- rbind(rows, pd[pd$id == r$f$name_id, , drop = FALSE])
+    if (nrow(rows)) files <- wb_splice(files, rel, p, wb_token_edits(rows, to))
+  }
+  wb_note(files, sprintf("Renamed %d call(s) of %s(); calls by string or in reports are not followed.", n, fn))
+}
+
+chg_rename_target <- function(files, ch) {
+  target <- ch$target
+  to <- ch$to
+  wb_check_name(to, "target name")
+  r <- wb_find_target(files, target)
+  parsed <- wb_parse_all(files)
+  wb_check_free(parsed, to)
+  reports <- wb_reports(files, parsed)
+  wb_check_reports(reports, sprintf("tar_(read|load)\\(\\s*%s\\s*[,)]", wb_rx_escape(target)),
+    paste0("The report %s reads target ", target, "; rename it there and in RStudio."))
+  map <- wb_map_of(parsed, r$rel, r$t)
+  if (!is.null(map)) {
+    prefix <- paste0(target, "_")
+    for (rel in names(parsed)) {
+      pd <- parsed[[rel]]$pd
+      hit <- pd$token == "SYMBOL" & startsWith(pd$text, prefix) & !pd$id %in% map$exclude[[rel]]
+      if (any(hit)) {
+        wb_bad(sprintf("Target %s is a map template and %s uses its variant %s; rename it in RStudio.",
+          target, rel, pd$text[hit][1]))
+      }
+    }
+    wb_check_reports(reports, sprintf("tar_(read|load)\\(\\s*%s", wb_rx_escape(prefix)),
+      paste0("The report %s reads variants of the map template ", target, "; rename it there and in RStudio."))
+  }
+  for (rel in names(parsed)) {
+    p <- parsed[[rel]]
+    pd <- p$pd
+    ids <- integer()
+    for (t in wb_targets(p)) {
+      ids <- c(ids, setdiff(parse_descendants(p$kids, t$id), parse_descendants(p$kids, t$name_id)))
+    }
+    # `x$target` / `x@target` are not references
+    field <- pd$parent[pd$token %in% c("'$'", "'@'")]
+    rows <- pd[pd$id %in% unique(ids) & pd$token == "SYMBOL" & pd$text == target & !pd$parent %in% field, , drop = FALSE]
+    if (rel == r$rel) {
+      rows <- rbind(rows, pd[pd$parent == r$t$name_id & pd$token %in% c("SYMBOL", "STR_CONST"), , drop = FALSE])
+    }
+    if (nrow(rows)) files <- wb_splice(files, rel, p, wb_token_edits(rows, to))
+  }
+  files
+}
+
+chg_remove_target <- function(files, ch) {
+  target <- ch$target
+  r <- wb_find_target(files, target)
+  container <- wb_parent(r$p, r$t$id)
+  if (!length(container) || container == 0L || is.na(wb_callee(r$p, container))) {
+    wb_bad(sprintf("Target %s is not an element of a list; remove it in RStudio.", target))
+  }
+  map <- wb_map_of(wb_parse_all(files), r$rel, r$t)
+  if (!is.null(map) && map$n <= 1L) {
+    wb_bad(sprintf("Target %s is the only template of its tar_map(); remove the map in RStudio.", target))
+  }
+  locate <- function(p) {
+    t <- wb_target(p, target)
+    wb_call_args(p, wb_parent(p, t$id))
+  }
+  wb_edit_args(files, r$rel, locate, function(args) {
+    list(remove = which(args$id == r$t$id), replace = list(), add = character())
+  })
+}
+
+# Append one element (`text`, lines) to a list: comma after the last element's
+# expression, the new element on its own line, indented like the last one
+# (two spaces for an empty list).
+wb_append_element <- function(p, lst, text) {
+  args <- lst$args
+  cp <- lst$close_paren
+  if (!nrow(args)) {
+    line <- p$lines[cp[["line"]]]
+    before <- substr(line, 1L, pd_char(line, cp[["col"]]) - 1L)
+    body <- paste0("  ", text, collapse = "\n")
+    if (!nzchar(trimws(before))) return(wb_edit(cp[["line"]], 1L, cp[["line"]], 0L, paste0(body, "\n")))
+    return(wb_edit(cp[["line"]], cp[["col"]], cp[["line"]], cp[["col"]] - 1L, paste0("\n", body, "\n")))
+  }
+  indent <- wb_arg_layout(p, args)
+  if (is.null(indent)) indent <- paste0(sub("^(\\s*).*$", "\\1", p$lines[args$line1[nrow(args)]]), "  ")
+  joined <- paste(c(text[1], if (length(text) > 1L) paste0(indent, text[-1])), collapse = "\n")
+  wb_append(p, args, cp, joined, indent = indent)
+}
+
+chg_add_target <- function(files, ch) {
+  block <- ch$block
+  if (!is.character(block) || length(block) != 1L || !grepl("^R/.+\\.[Rr]$", block)) {
+    wb_bad("The block must be a file R/<name>.R.")
+  }
+  stem <- sub("\\.[Rr]$", "", basename(block))
+  holder <- paste0("pipeline_", stem)
+  wb_check_name(holder, "block list name")
+  wb_check_name(ch$target, "target name")
+  fn <- ch$fn
+  wb_check_name(fn$name, "function name")
+  parsed <- wb_parse_all(files)
+  for (rel in names(parsed)) {
+    if (wb_n_targets(parsed[[rel]], ch$target)) wb_bad(sprintf("%s is already a target in %s.", ch$target, rel))
+  }
+  fn_lines <- NULL
+  if (!any(vapply(parsed, wb_n_functions, integer(1), name = fn$name) > 0L)) {
+    if (!length(fn$body) || !nzchar(trimws(fn$body))) fn$body <- sprintf("stop(\"Not implemented: %s()\")", fn$name)
+    fn_lines <- function_text(fn)
+  }
+  call_lines <- target_text(ch$target, fn$name, ch$args, ch$format, ch$pattern)
+  p <- parsed[[block]]
+  bl <- if (!is.null(p)) wb_block_list(p, holder)
+  if (!is.null(p) && is.null(bl) && !is.null(wb_assignment(p, holder))) {
+    wb_bad(sprintf("%s in %s is not a list(...); add the target in RStudio.", holder, block))
+  }
+  if (!is.null(bl)) {
+    files <- wb_splice(files, block, p, wb_append_element(p, bl, call_lines))
+    if (length(fn_lines)) {
+      lines <- wb_files_get(files, block)$lines
+      a <- wb_assignment(wb_parse(lines, block), holder)
+      at <- a$lhs$line1
+      # keep comment lines directly above the holder with it
+      while (at > 1L && grepl("^\\s*#", lines[at - 1L])) at <- at - 1L
+      before <- lines[seq_len(at - 1L)]
+      blank <- length(before) && nzchar(trimws(before[length(before)]))
+      files <- wb_put(files, block, c(before, if (blank) "", fn_lines, "", lines[at:length(lines)]))
+    }
+    return(files)
+  }
+  # no block list yet: create it and add it to the composition in _targets.R
+  tp <- parsed[["_targets.R"]]
+  comp <- if (!is.null(tp)) wb_composition(tp)
+  if (is.null(comp)) wb_bad(sprintf("Cannot find the list of blocks in _targets.R; add %s there by hand.", holder))
+  if (!holder %in% comp$args$text[comp$args$name == ""]) {
+    files <- wb_splice(files, "_targets.R", tp, wb_append_element(tp, comp, holder))
+  }
+  new <- c(fn_lines, if (length(fn_lines)) "", paste0(holder, " <- list("), paste0("  ", call_lines), ")")
+  if (is.null(p)) {
+    files[[block]] <- list(lines = new, eol = "\n", final_nl = TRUE)
+    return(files)
+  }
+  lines <- p$lines
+  blank <- length(lines) && nzchar(trimws(lines[length(lines)]))
+  wb_put(files, block, c(lines, if (blank) "", new))
 }

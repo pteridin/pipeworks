@@ -82,17 +82,32 @@ wb_call_args <- function(p, id) {
   )
 }
 
-# A top-level `name <- <rhs>` (also `=`): the top expression and its rhs.
-wb_assignment <- function(p, name) {
+# Every top-level `name <- <rhs>` (also `=`): the top expression and its rhs.
+wb_assignments <- function(p, name) {
+  out <- list()
   for (id in wb_tops(p)$id) {
     k <- wb_children(p, id)
     if (nrow(k) != 3L || k$token[1] != "expr" || !k$token[2] %in% c("LEFT_ASSIGN", "EQ_ASSIGN")) next
     lhs <- wb_children(p, k$id[1])
     if (nrow(lhs) != 1L || !lhs$token %in% c("SYMBOL", "STR_CONST") ||
         !identical(sub("^[\"'`]|[\"'`]$", "", lhs$text), name)) next
-    return(list(id = id, lhs = lhs, rhs = k$id[3]))
+    out[[length(out) + 1L]] <- list(id = id, lhs = lhs, rhs = k$id[3])
   }
-  NULL
+  out
+}
+
+# The first top-level `name <- <rhs>`.
+wb_assignment <- function(p, name) {
+  a <- wb_assignments(p, name)
+  if (length(a)) a[[1]] else NULL
+}
+
+# Number of top-level function definitions called `name`.
+wb_n_functions <- function(p, name) {
+  sum(vapply(wb_assignments(p, name), function(a) {
+    fk <- wb_children(p, a$rhs)
+    nrow(fk) > 0L && fk$token[1] %in% c("FUNCTION", "'\\\\'")
+  }, logical(1)))
 }
 
 # A top-level function definition `name <- function(...) ...`.
@@ -132,13 +147,14 @@ wb_function <- function(p, name) {
   )
 }
 
-# The first target-defining call (`TARGET_CALLS`, also `pkg::fn`) in the file
-# whose name argument is `name`: top level, inside `list()`, `tar_map()` or a
-# template holder.
-wb_target <- function(p, name) {
+# Every target-defining call (`TARGET_CALLS`, also `pkg::fn`) in the file, in
+# source order: top level, inside `list()`, `tar_map()` or a template holder.
+# `name_id` is the expression of the name argument.
+wb_targets <- function(p) {
   pd <- p$pd
   sym <- pd[pd$token == "SYMBOL_FUNCTION_CALL" & pd$text %in% TARGET_CALLS, , drop = FALSE]
   sym <- sym[order(sym$line1, sym$col1), , drop = FALSE]
+  out <- list()
   for (j in seq_len(nrow(sym))) {
     call_id <- pd$parent[pd$id == pd$parent[pd$id == sym$id[j]]]
     ca <- wb_call_args(p, call_id)
@@ -148,19 +164,26 @@ wb_target <- function(p, name) {
     n <- if (length(by_name)) by_name[1] else if (length(pos)) pos[1] else NA_integer_
     if (is.na(n)) next
     value <- tryCatch(str2lang(args$text[n]), error = function(e) NULL)
-    if (!identical(arg_name(value), name)) next
+    nm <- arg_name(value)
+    if (is.na(nm)) next
     cmd <- which(args$name == "command")
     if (!length(cmd)) {
       rest <- setdiff(pos, n)
       cmd <- if (length(rest)) rest[1] else integer()
     }
     row <- pd[pd$id == call_id, ]
-    return(list(
-      id = call_id, fn = sym$text[j], line1 = row$line1, line2 = row$line2,
+    out[[length(out) + 1L]] <- list(
+      id = call_id, name = nm, fn = sym$text[j], line1 = row$line1, line2 = row$line2,
       close_paren = ca$close_paren, args = args[c("name", "line1", "col1", "line2", "col2", "text")],
-      cmd_id = if (length(cmd)) args$id[cmd[1]] else NA_integer_
-    ))
+      cmd_id = if (length(cmd)) args$id[cmd[1]] else NA_integer_, name_id = args$id[n], name_arg = n
+    )
   }
+  out
+}
+
+# The first target-defining call whose name argument is `name`.
+wb_target <- function(p, name) {
+  for (t in wb_targets(p)) if (identical(t$name, name)) return(t)
   NULL
 }
 
