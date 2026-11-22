@@ -172,6 +172,9 @@ svg.edges { position: absolute; left: -5000px; top: -5000px; width: 10000px; hei
 .node.dragging { box-shadow: var(--shadow-lg); z-index: 3; }
 .node.drop-ok { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow); }
 .node.drop-bad { border-color: var(--s-err); }
+/* live page: a box whose change is being written to the files, until the rebuilt model arrives */
+.node.wr { border-style: dashed; border-color: var(--accent); }
+.node.wr::after { content: 'writing…'; position: absolute; right: 10px; bottom: -9px; padding: 0 7px; border-radius: 99px; font-size: 10.5px; line-height: 17px; background: var(--accent); color: var(--accent-ink); }
 .n-top { display: flex; align-items: center; gap: 8px; }
 .n-name { font-family: var(--f-mono); font-weight: 600; font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .n-status { width: 9px; height: 9px; border-radius: 50%; background: var(--sc); flex: none; }
@@ -409,9 +412,6 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 .icon-btn svg { width: 16px; height: 16px; }
 .app.sb-off { grid-template-columns: minmax(0, 1fr); }
 .toolbar .seg { align-self: center; }
-.confirm { position: fixed; z-index: 45; top: 64px; left: 50%; transform: translateX(-50%); width: min(420px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-lg); }
-.confirm p { margin: 0; font-weight: 600; }
-.confirm-btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 /* Last rule on purpose: the artifact viewer adds this reset itself; a page written by pipeworks() needs its own. */
 [hidden][hidden] { display: none !important; } /* doubled: wins over single-class display rules even without !important */
 </style>
@@ -533,7 +533,6 @@ pre.plain { margin: 0; padding: 10px 12px; font-family: var(--f-mono); font-size
 </div>
 
 <div class="overlay" id="overlay" hidden><div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="m-name"></div></div>
-<div class="confirm" id="confirm" role="alertdialog" aria-labelledby="confirm-msg" hidden><p id="confirm-msg"></p><div class="confirm-btns"><button class="btn" id="confirm-no">Stay in Build</button><button class="btn primary" id="confirm-yes">Discard and switch</button></div></div>
 <div class="toast" id="toast" role="status"><span id="toast-msg"></span><button id="toast-act" hidden>Undo</button></div>
 <div class="nodata" id="nodata" hidden><div><h1>No pipeline loaded</h1><p class="help">Open this editor from R with <code>pipeworks::pipeworks()</code> in a targets project.</p><p class="help" id="nodata-why"></p></div></div>
 
@@ -569,7 +568,7 @@ function fromModel(D) {
       title: f.title || '', description: f.description || '', returns: f.returns || '', family: f.family || '',
       params: Array.isArray(f.params) || !f.params ? {} : { ...f.params },
       keywords: arr(f.keywords), formals: arr(f.formals).map(x => ({ name: x.name, default: x.default ?? null })),
-      body: f.body || '', calls: arr(f.calls), called_by: arr(f.called_by), qa: f.qa || null,
+      body: f.body || '', calls: arr(f.calls), called_by: arr(f.called_by), qa: f.qa || null, base: f.base || null,
     };
   });
   const targets = {};
@@ -579,7 +578,7 @@ function fromModel(D) {
       args: arr(t.args).map(a => ({ name: a.name, value: a.value, kind: a.kind, named: !!a.named, refs: arr(a.targets) })),
       pattern: t.pattern || '', description: t.description || '', format: t.format || 'rds', status: t.status || 'unknown',
       factory: t.factory || '', source: t.source || '', block: t.block || '', map: t.map || null,
-      branches: t.branches ?? null, qa: t.qa || null, qa_file: t.qa_file || null, x: 0, y: 0,
+      branches: t.branches ?? null, qa: t.qa || null, qa_file: t.qa_file || null, base: t.base || null, x: 0, y: 0,
     };
   });
   return { targets, fns, edges: arr(D.edges).map(e => ({ from: e.from, to: e.to })), sel: null };
@@ -608,24 +607,18 @@ let hover = null, drawerTab = '_targets.R', hitLines = null;
 const undoStack = [];
 
 const snap = () => JSON.stringify({ targets: S.targets, fns: S.fns, edges: S.edges });
-/* Structure only (no positions): the view differs from the model when this differs from BASE, taken when a model is loaded. */
-const structSnap = () => JSON.stringify({ t: Object.values(S.targets).map(({ x, y, _h, ...t }) => t), f: S.fns, e: S.edges });
-let BASE = null;
-const noPos = o => { const { x, y, _h, ...r } = o || {}; return JSON.stringify(r); };
-/* Unapplied changes in an open Build dialog count too. */
-const modalDirty = () => !!M && !REVIEW() && (!S.targets[M.id] || noPos(M.t) !== noPos(S.targets[M.id]) || JSON.stringify(M.f) !== JSON.stringify(fnOf(M.id) || null));
-const viewDiffers = () => structSnap() !== BASE || modalDirty();
+/* Static page: undo restores snapshots of this view. Live page: undo entries are writes ({ write_id, label }), undone by R. */
 function push(s = snap()) { if (undoStack[undoStack.length - 1] !== s) undoStack.push(s); if (undoStack.length > 100) undoStack.shift(); updateDirty(); }
-function updateDirty() { $('#btn-undo').disabled = !undoStack.length; $('#dirty').hidden = !undoStack.length; }
+function updateDirty() { $('#btn-undo').disabled = !undoStack.length; $('#dirty').hidden = IS_LIVE || !undoStack.length; }
 function undo() {
   if (REVIEW()) return toast(BUILD_ONLY);
+  if (IS_LIVE) return liveUndo();
   const s = undoStack.pop(); if (!s) return toast('Nothing to undo.');
   Object.assign(S, JSON.parse(s));
   VG = null;
   if (S.sel && S.sel.type === 'node' && !vnode(S.sel.id)) S.sel = null;
   if (S.sel && S.sel.type === 'edge' && !vedgeById(S.sel.id)) S.sel = null;
   updateDirty(); renderAll();
-  if (PENDING && !viewDiffers()) applyModel(PENDING);
 }
 
 /* ---------- Graph helpers ---------- */
@@ -850,29 +843,34 @@ function unplugFrom(t, f, from, depsList) {
 }
 function connect(from, to) {
   if (REVIEW()) return toast(BUILD_ONLY);
+  if (writing()) return;
   const why = canConnect(from, to); if (why) return toast(why);
-  push();
+  const before = snap(); if (!IS_LIVE) push(before);
   const t = S.targets[to], f = fnOf(to), list = [];
   const added = plugInto(t, f, from, list);
   S.edges.push({ from, to });
   invalidate(to); renderAll();
+  if (IS_LIVE) return liveCommit(before, `Plug ${nm(from)} into ${nm(to)}`);
   toast(added ? `Added argument ${nm(from)} to ${f.name}()${usedBy(f.name).length > 1 ? ` with default NULL, because ${usedBy(f.name).length - 1} other target(s) share it` : ''}.` : `${nm(to)} now passes ${nm(from)} to ${f.name}().`, true);
 }
 function unplug(from, to) {
   if (REVIEW()) return toast(BUILD_ONLY);
   const t = S.targets[to];
   if (t.mode !== 'function') return toast(t.mode === 'factory' ? `Remove tar_read(${nm(from)}) from ${t.source} to unplug it.` : `Remove ${nm(from)} from the command of ${nm(to)} to unplug it.`);
+  if (writing()) return;
   const before = snap(), list = deps(to);
   const why = unplugFrom(t, fnOf(to), from, list);
   if (why) { Object.assign(S, JSON.parse(before), { sel: S.sel }); return toast(why); }
-  push(before);
+  if (!IS_LIVE) push(before);
   S.edges = S.edges.filter(e => !(e.from === from && e.to === to));
   invalidate(to); S.sel = null; renderAll();
+  if (IS_LIVE) return liveCommit(before, `Unplug ${nm(from)} from ${nm(to)}`);
   toast(`Unplugged ${nm(from)} from ${nm(to)}.`, true);
 }
 function uniqueName(base, taken) { if (!taken.has(base)) return base; let i = 2; while (taken.has(`${base}_${i}`)) i++; return `${base}_${i}`; }
 function addTarget(x, y, from) {
   if (REVIEW()) return toast(BUILD_ONLY);
+  if (writing()) return;
   const before = snap();
   const name = uniqueName(from ? `${nm(from)}_next` : 'new_target', new Set(Object.values(S.targets).map(t => t.name)));
   let id = name; while (S.targets[id]) id += '_';
@@ -890,13 +888,167 @@ function addTarget(x, y, from) {
 }
 function removeTarget(id) {
   if (REVIEW()) return toast(BUILD_ONLY);
-  push();
+  if (writing()) return;
+  const before = snap(); if (!IS_LIVE) push(before);
   const name = nm(id);
   downs(id).forEach(d => { const t = S.targets[d]; t.args = t.args.filter(a => !(a.kind === 'target' && a.refs[0] === id)); invalidate(d); });
   S.edges = S.edges.filter(e => e.from !== id && e.to !== id);
   delete S.targets[id];
   S.sel = null; renderAll();
+  if (IS_LIVE) return liveCommit(before, `Remove ${name}`);
   toast(`Removed ${name}.`, true);
+}
+
+/* ---------- Writing to the files (live page, Build mode) ----------
+   Every action changes this view at once (optimistic), then sends the difference as chunk-level
+   changes to api/edit. R answers with the version of the write; the page then waits for the rebuilt
+   model (building done, a later version) and takes it. A refusal brings back the last model. */
+const STILL = 'Still writing the last change…';
+let BUSY = false;           // an api/edit or api/undo request is open: one at a time
+let WAIT = null;            // version returned by the last write; Build applies only a later, finished model
+const WRITING = new Set();  // target ids marked .wr ("writing…") until the next model
+const WRITTEN = new Set();  // items written since the last rebuilt model (their base is out of date); '*' = all
+const writing = () => IS_LIVE && BUSY && (toast(STILL), true);
+const clone = o => JSON.parse(JSON.stringify(o));
+
+/* The change list (see the vocabulary in the write-back design) that turns snapshot `a` into `b`.
+   item/base come from `a`; map variants are written as their template; set_* use the old names. */
+function diffChanges(a, b) {
+  const tSets = [], fSets = [], renF = [], renT = [], rems = [], adds = [], seen = new Set();
+  const once = k => !seen.has(k) && seen.add(k);
+  const key = t => (t.map ? t.map.template : t.name);
+  const oldName = id => (a.targets[id] || b.targets[id])?.name ?? id;
+  // the arguments as written in the call: a variant's own values go back to the template's symbols
+  const callArgs = t => t.args.map(x => {
+    let value = x.value;
+    if (x.kind === 'target') {
+      const r = a.targets[x.refs[0]] || b.targets[x.refs[0]];
+      value = oldName(x.refs[0]);
+      if (t.map && r && r.map && r.map.id === t.map.id && r.map.variant === t.map.variant) value = r.map.template;
+    } else if (t.map && MAPS[t.map.id]?.param && x.value === JSON.stringify(String(t.map.variant))) value = MAPS[t.map.id].param;
+    return { name: x.name, value, named: !!x.named };
+  });
+  const orNull = v => (v == null || !String(v).trim() ? null : v);
+  Object.keys(a.targets).forEach(id => {
+    const ta = a.targets[id], tb = b.targets[id], k = key(ta);
+    const own = { item: `target:${k}`, base: ta.base, target: k };
+    if (!tb) { if (once(`rm:${k}`)) rems.push({ kind: 'remove_target', ...own }); return; }
+    if (ta.name !== tb.name && once(`rn:${k}`)) {
+      let to = tb.name;
+      if (ta.map) {
+        const suffix = `_${ta.map.variant}`;
+        if (!to.endsWith(suffix) || to === suffix) throw new Error(`${ta.name} is variant ${ta.map.variant} of template ${k}: its name has to end in ${suffix}.`);
+        to = to.slice(0, -suffix.length);
+      }
+      renT.push({ kind: 'rename_target', ...own, to });
+    }
+    if ((ta.format || 'rds') !== (tb.format || 'rds') && once(`fmt:${k}`)) tSets.push({ kind: 'set_target_arg', ...own, arg: 'format', value: tb.format === 'rds' ? null : tb.format || null });
+    if ((ta.pattern || '') !== (tb.pattern || '') && once(`pat:${k}`)) tSets.push({ kind: 'set_target_arg', ...own, arg: 'pattern', value: orNull(tb.pattern) });
+    if (ta.mode === 'expression' && (ta.description || '') !== (tb.description || '') && once(`desc:${k}`)) tSets.push({ kind: 'set_target_arg', ...own, arg: 'description', value: orNull(tb.description) });
+    if (ta.mode === 'function') {
+      const args = callArgs(tb);
+      if (JSON.stringify(callArgs(ta)) !== JSON.stringify(args) && once(`call:${k}`)) tSets.push({ kind: 'set_call', ...own, args });
+    }
+    // the function behind the target (once per function, matched through its targets)
+    const fa = ta.mode === 'function' ? a.fns[ta.fn] : null, fb = tb.mode === 'function' ? b.fns[tb.fn] : null;
+    if (!fa || !fb || !once(`fn:${fa.name}`)) return;
+    const fown = { item: `function:${fa.name}`, base: fa.base, fn: fa.name };
+    const formals = fs => fs.map(x => ({ name: x.name, default: x.default ?? null }));
+    if (JSON.stringify(formals(fa.formals)) !== JSON.stringify(formals(fb.formals))) fSets.push({ kind: 'set_formals', ...fown, formals: formals(fb.formals) });
+    if ((fa.body || '') !== (fb.body || '')) fSets.push({ kind: 'set_body', ...fown, body: fb.body || '' });
+    const doc = (field, va, vb, param) => { if ((va || '') !== (vb || '')) fSets.push({ kind: 'set_doc', ...fown, field, ...(param != null ? { param } : {}), value: orNull(vb) }); };
+    doc('title', fa.title, fb.title);
+    doc('description', fa.description, fb.description);
+    const pa = fa.params || {}, pb = fb.params || {};
+    [...new Set([...fb.formals.map(x => x.name), ...Object.keys(pa), ...Object.keys(pb)])].forEach(p => doc('param', pa[p], pb[p], p));
+    doc('returns', fa.returns, fb.returns);
+    doc('family', fa.family, fb.family);
+    if (fa.name !== fb.name && !b.fns[fa.name]) renF.push({ kind: 'rename_function', ...fown, to: fb.name });
+  });
+  Object.keys(b.targets).forEach(id => {
+    if (a.targets[id]) return;
+    const t = b.targets[id], f = b.fns[t.fn];
+    if (!f || !once(`add:${t.name}`)) return;
+    adds.push({
+      kind: 'add_target', target: t.name, block: t.block,
+      fn: { name: f.name, title: f.title, description: f.description, returns: f.returns, family: f.family, params: { ...f.params }, formals: f.formals.map(x => ({ name: x.name, default: x.default ?? null })), body: f.body },
+      args: callArgs(t), format: t.format === 'rds' ? null : t.format || null, pattern: orNull(t.pattern),
+    });
+  });
+  return [...tSets, ...fSets, ...renF, ...renT, ...rems, ...adds];
+}
+
+/* Undo the optimistic change after a refusal and, for a dialog, open it again with the user's text. */
+function reopenDialog(dlg) {
+  if (!dlg) return;
+  let before = dlg.before;
+  if (dlg.isNew && !S.targets[dlg.id]) {
+    // the new target was not written: put its placeholder back for the dialog
+    before = snap();
+    const p = JSON.parse(dlg.pre), t = p.targets[dlg.id];
+    if (!t) return;
+    S.targets[dlg.id] = t; if (p.fns[t.fn]) S.fns[t.fn] = p.fns[t.fn];
+    S.edges.push(...p.edges.filter(e => e.to === dlg.id));
+    renderAll();
+  }
+  if (!S.targets[dlg.id]) return;
+  M = { id: dlg.id, t: dlg.t, f: dlg.f, deps: dlg.deps, isNew: dlg.isNew, before, lastFocus: null };
+  renderModal(); overlay.hidden = false;
+}
+function refuseLocal(msg, restore, dlg) {
+  Object.assign(S, JSON.parse(restore), { sel: S.sel }); VG = null;
+  if (S.sel && S.sel.type === 'node' && !vnode(S.sel.id)) S.sel = null;
+  renderAll(); reopenDialog(dlg); toast(msg);
+}
+/* `before`: snapshot before the action. `dlg`: the dialog state when the action came from a dialog. */
+function liveCommit(before, label, dlg) {
+  const a = JSON.parse(before);
+  let changes;
+  try { changes = diffChanges(a, { targets: S.targets, fns: S.fns, edges: S.edges }); }
+  catch (e) { return refuseLocal(e.message, dlg ? dlg.pre : before, dlg); }
+  if (!changes.length) return toast('Nothing to write: the files already say this.');
+  // an item written a moment ago has no fresh base until the rebuilt model arrives
+  if (changes.some(c => WRITTEN.has('*') || (c.item && WRITTEN.has(c.item)))) return refuseLocal(STILL, dlg ? dlg.pre : before, dlg);
+  const tkeys = new Set(changes.filter(c => c.target).map(c => c.target)), fkeys = new Set(changes.filter(c => c.fn && c.kind !== 'add_target').map(c => c.fn));
+  WRITING.clear();
+  ids().forEach(i => { const t = S.targets[i], k = t.map ? t.map.template : t.name, o = a.targets[i]; if (tkeys.has(k) || (o && tkeys.has(o.map ? o.map.template : o.name)) || (o && o.mode === 'function' && fkeys.has(o.fn))) WRITING.add(i); });
+  BUSY = true; updateDirty(); renderNodes();
+  api('edit', { changes }).then(r => {
+    BUSY = false;
+    undoStack.push({ write_id: r.write_id, label }); if (undoStack.length > 100) undoStack.shift();
+    updateDirty();
+    if (r.version != null) WAIT = r.version;
+    changes.forEach(c => { if (c.item) WRITTEN.add(c.item); if (/^(rename|add)_/.test(c.kind)) WRITTEN.add('*'); });
+    // a removed target's function with no target and no caller left
+    const unused = !changes.some(c => c.kind === 'remove_target') ? [] : Object.keys(a.targets)
+      .filter(i => !S.targets[i] && a.targets[i].mode === 'function').map(i => a.targets[i].fn)
+      .filter(fn => fn && !usedBy(fn).length && !arr(S.fns[fn]?.called_by).length);
+    const files = arr(r.files);
+    toast([`Written to ${files.length ? files.join(', ') : 'your files'}.`, ...arr(r.notes), ...[...new Set(unused)].map(fn => `${fn}() is now unused.`)].join(' '), true);
+  }).catch(e => {
+    BUSY = false; updateDirty();
+    if (e.kind === 'lost' || e.kind === 'refused') setConn(e);
+    applyModel(RAW);
+    reopenDialog(dlg);
+    toast(connText(e));
+  });
+}
+function liveUndo() {
+  if (writing()) return;
+  const top = undoStack.pop(); if (!top) return toast('Nothing to undo.');
+  BUSY = true; updateDirty();
+  api('undo', { write_id: top.write_id }).then(r => {
+    BUSY = false; updateDirty();
+    if (r.version != null) WAIT = r.version;
+    WRITTEN.add('*');
+    toast(`Undone: ${top.label}.`);
+  }).catch(e => {
+    BUSY = false;
+    // R did not get the request: the write can still be undone later
+    if (e.kind === 'lost' || e.kind === 'refused') { undoStack.push(top); setConn(e); }
+    updateDirty();
+    toast(connText(e));
+  });
 }
 /* Canvas actions on view nodes and edges: a folded map card stands for several targets, so single-target actions need it unfolded. */
 const UNFOLD = 'Unfold the map (click its pill) to change a single variant.';
@@ -1028,7 +1180,8 @@ function renderNodes() {
       t.pattern ? `<span class="chip">${esc(t.pattern)}</span><span class="chip" title="${t.branches == null ? 'Dynamic branches: number known after a run' : `${t.branches} dynamic branches`}">×${t.branches ?? '?'}</span>` : '',
       issues ? `<span class="chip warn">${issues} to document</span>` : '',
     ].join('');
-    const cls = ['node', `status-${status}`, m ? `mapped mc-${m.color}` : '', n.stack ? 'stack' : '', q ? `qa-${q.group}` : '', sel ? 'sel' : '', dim ? 'dim' : ''].filter(Boolean).join(' ');
+    const wr = n.members.some(i => WRITING.has(i));
+    const cls = ['node', `status-${status}`, m ? `mapped mc-${m.color}` : '', n.stack ? 'stack' : '', q ? `qa-${q.group}` : '', sel ? 'sel' : '', dim ? 'dim' : '', wr ? 'wr' : ''].filter(Boolean).join(' ');
     const pill = m ? `<button class="mpill" data-map="${esc(m.id)}" title="${n.stack ? `Unfold all ${m.variants.length} variants of this tar_map(): ${esc(m.variants.join(', '))}` : 'Fold this tar_map() back into one card per template'}">${n.stack ? esc(mapLabel(m)) : 'collapse'}</button>` : '';
     const tag = q && q.tag ? `<span class="qa-tag${q.group === 'bad' || q.group === 'doubt' ? ' ' + q.group : ''}" title="Review status: ${esc(QA_LABEL[q.status] || q.status)}${q.self ? ' (self-reviewed)' : ''}">${esc(q.tag)}</span>` : '';
     return `<div class="${cls}" data-id="${esc(id)}" style="transform:translate(${pos.x}px,${pos.y}px)">
@@ -1158,14 +1311,16 @@ function wrap(text, width = 76) {
   return text.split('\n').flatMap(par => { const out = []; let line = ''; par.split(/\s+/).forEach(w => { if (line && (line + ' ' + w).length > width) { out.push(line); line = w; } else line = line ? line + ' ' + w : w; }); out.push(line); return out; });
 }
 function roxygenFor(f) {
+  // tag continuation lines are indented "#'   ", as R's rox_lines() writes them
   const L = [], add = s => wrap(s).forEach(x => L.push(("#' " + x).trimEnd()));
+  const tag = s => wrap(s).forEach((x, i) => L.push(((i ? "#'   " : "#' ") + x).trimEnd()));
   add(f.title || 'TODO: one-line title');
   L.push("#'");
   if (f.description) { f.description.split(/\n\n+/).forEach(p => { add(p); L.push("#'"); }); }
-  f.formals.forEach(x => add(`@param ${x.name} ${f.params[x.name] || 'TODO: describe this argument.'}`));
-  add(`@return ${f.returns || 'TODO: describe the result.'}`);
-  if (f.family) add(`@family ${f.family}`);
-  f.keywords.forEach(k => add(`@keywords ${k}`));
+  f.formals.forEach(x => tag(`@param ${x.name} ${f.params[x.name] || 'TODO: describe this argument.'}`));
+  tag(`@return ${f.returns || 'TODO: describe the result.'}`);
+  if (f.family) tag(`@family ${f.family}`);
+  f.keywords.forEach(k => tag(`@keywords ${k}`));
   return L.join('\n');
 }
 const indent = (s, n) => s.split('\n').map(l => (l ? ' '.repeat(n) + l : l)).join('\n');
@@ -1214,7 +1369,6 @@ function closeModal(saved) {
   if (!saved && M.isNew) { Object.assign(S, JSON.parse(M.before)); S.sel = null; renderAll(); }
   overlay.hidden = true; modal.innerHTML = ''; const lf = M.lastFocus; M = null;
   if (lf && lf.focus && document.contains(lf)) lf.focus();
-  if (PENDING) applyPending();
 }
 function argSource(t, formal) {
   const a = t.args.find(x => x.name === formal.name);
@@ -1297,7 +1451,7 @@ function renderModal() {
     <footer class="m-foot">
       ${M.isNew || locked || rv ? '' : '<button class="btn danger" data-m="remove">Remove target</button>'}
       <span class="spacer"></span>
-      <span class="help hide-narrow">${rv ? 'Review mode: change code in RStudio; this view refreshes' : 'Writing to files comes with the live connection'}</span>
+      <span class="help hide-narrow">${rv ? 'Review mode: change code in RStudio; this view refreshes' : IS_LIVE ? 'Apply writes to your files' : 'Writing to files comes with the live connection'}</span>
       <button class="btn" data-m="cancel">${rv ? 'Close' : 'Cancel'}</button>
       ${rv ? '' : '<button class="btn primary" data-m="save">Apply</button>'}
     </footer>`;
@@ -1390,12 +1544,13 @@ function nameError(v, kind, selfName) {
   return '';
 }
 function saveModal() {
-  if (REVIEW()) return;
+  if (REVIEW() || writing()) return;
   const t = M.t, f = M.f, orig = fnOf(M.id);
   const err = nameError(t.name.trim(), 'target') || (f ? nameError(f.name.trim(), 'function', orig.name) : '');
   const box = $('#m-err'); box.hidden = !err; box.textContent = err;
   if (err) return;
-  push(M.isNew ? M.before : snap());
+  const pre = snap(), before = M.isNew ? M.before : pre;
+  if (!IS_LIVE) push(before);
   const cur = S.targets[M.id];
   if (M.locked) { ['name', 'description', 'format', 'pattern', 'args'].forEach(k => { t[k] = JSON.parse(JSON.stringify(cur[k])); }); M.deps = deps(M.id); }
   t.name = t.name.trim();
@@ -1413,9 +1568,12 @@ function saveModal() {
   S.edges = S.edges.filter(e => e.to !== M.id).concat(M.deps.map(from => ({ from, to: M.id })));
   if (codeChanged || cur.pattern !== t.pattern) invalidate(M.id);
   const wasNew = M.isNew;
+  // what a refusal needs to open the dialog again with the user's text
+  const dlg = IS_LIVE ? { id: M.id, t: clone(M.t), f: clone(M.f), deps: [...M.deps], isNew: wasNew, before: M.before, pre } : null;
   closeModal(true);
   renderAll();
   if (wasNew) autoLayout();
+  if (IS_LIVE) return liveCommit(before, `${wasNew ? 'Add' : 'Edit'} ${t.name}`, dlg);
   toast(wasNew ? `Added ${t.name}. It exists only in this view until writing to files is implemented.` : 'Applied in this view. Your files are unchanged.', true);
 }
 function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px'; }
@@ -1602,10 +1760,10 @@ $('#btn-add').onclick = () => { const r = canvas.getBoundingClientRect(), w = to
 $('#btn-layout').onclick = autoLayout;
 $('#btn-undo').onclick = undo;
 $('#btn-reset').onclick = () => {
+  if (IS_LIVE) return;   // the live page has no view-only changes: every action is written
   if (!undoStack.length) return toast('Nothing to discard. The view matches your files.');
   push(); const keep = currentPos(); S = fromModel(RAW); VG = null; Object.entries(keep).forEach(([i, p]) => { if (vnode(i)) Object.assign(P(i), p); });
   renderAll(); autoLayout(); toast('Back to what is in your files.', true);
-  if (PENDING) applyPending();
 };
 $('#tabs').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1619,7 +1777,6 @@ $('#tabs').addEventListener('click', e => {
   }
 });
 document.addEventListener('keydown', e => {
-  if (!confirmEl.hidden && e.key === 'Escape') { e.preventDefault(); return hideConfirm(); }
   if (M) {
     if (e.key === 'Escape') { e.preventDefault(); closeModal(false); }
     else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveModal(); }
@@ -1685,7 +1842,6 @@ async function api(path, body) {
 const LOST = 'Connection to R lost: run pipeworks() again.';
 const connText = e => e.kind === 'refused' ? `Connection refused by R: ${e.message}` : e.kind === 'lost' ? LOST : e.message;
 let CONN = null;           // the last failed poll, null while R answers
-let PENDING = null;        // a newer model held back while this view has unsaved edits
 let refreshedAt = null;
 function setConn(e) { const was = CONN && connText(CONN); CONN = e; if ((CONN && connText(CONN)) !== was) { renderBanners(); renderSession(); } }
 
@@ -1719,22 +1875,24 @@ async function fetchModel() {
   const m = await api('model');
   if (!m || !m.targets || !m.live) throw apiFail('http', 'R sent a model without targets.');
   refreshedAt = new Date();
-  // follow a mode change made in R, but never into Review over changes of this view
-  if (m.live.mode !== serverMode) {
-    serverMode = m.live.mode;
-    if (m.live.mode === 'build' || (m.live.mode === 'review' && !(mode === 'build' && viewDiffers()))) mode = m.live.mode;
+  // follow a mode change made in R
+  if (m.live.mode !== serverMode) { serverMode = m.live.mode; mode = m.live.mode; }
+  // Review always shows the latest model. Build holds back the model while a write is open and
+  // until R has rebuilt the model after it (building done, a version later than the write's).
+  if (!REVIEW() && (BUSY || m.live.building || (WAIT != null && !(m.live.version > WAIT)))) {
+    LIVE = m.live; renderAll(); return;
   }
-  // Review always shows the latest model; Build holds it back only while the view has changes of its own
-  if (!REVIEW() && viewDiffers()) { PENDING = m; LIVE = m.live; MODEL_ERROR = m.model_error || null; renderAll(); return; }
+  WAIT = null; WRITTEN.clear();
   applyModel(m);
 }
-function applyPending() { if (PENDING && !viewDiffers()) applyModel(PENDING); else renderBanners(); }
-/* Swap in a new model, keeping selection, folded maps, mode, viewport and node positions. */
+/* Swap in a new model, keeping selection, folded maps, mode, viewport, node positions and an open dialog. */
 function applyModel(m) {
   const keepPos = currentPos(), keepSel = S.sel, keepView = { ...view };
-  setModel(m); PENDING = null;
-  undoStack.length = 0;
-  S = fromModel(RAW); VG = null; BASE = structSnap();
+  const old = M ? { t: S.targets[M.id] ? clone(S.targets[M.id]) : null, f: fnOf(M.id) ? clone(fnOf(M.id)) : null } : null;
+  const draft = M && M.isNew && S.targets[M.id] ? { t: S.targets[M.id], f: fnOf(M.id), edges: S.edges.filter(e => e.to === M.id) } : null;
+  setModel(m);
+  WRITING.clear();
+  S = fromModel(RAW); VG = null;
   [...unfolded].forEach(id => { if (!MAPS[id]) unfolded.delete(id); });
   const lay = computeLayout(); let fresh = false;
   vids().forEach(i => { if (keepPos[i]) Object.assign(P(i), keepPos[i]); else { fresh = true; Object.assign(P(i), lay[i]); } });
@@ -1743,9 +1901,27 @@ function applyModel(m) {
   updateDirty(); renderAll(); renderPositions();
   view = keepView; applyView();
   if (fresh) animateTo(lay, null);
+  if (M && draft && !S.targets[M.id]) {
+    // a new target being added in the dialog: keep its placeholder on top of the new model
+    M.before = snap();
+    S.targets[M.id] = draft.t; if (draft.f) S.fns[draft.f.name] = draft.f; S.edges.push(...draft.edges.filter(e => S.targets[e.from]));
+    renderAll();
+  }
   if (M) {
     if (!S.targets[M.id]) closeModal(true);
-    else { const f = fnOf(M.id); M.t = JSON.parse(JSON.stringify(S.targets[M.id])); M.f = f ? JSON.parse(JSON.stringify(f)) : null; M.deps = deps(M.id); rerenderModal(); }
+    else if (!M.isNew) {
+      // fields the user has not touched take the new values; touched ones keep the user's text
+      const merge = (cur, was, now) => {
+        if (!now) return null;
+        const out = clone(now);
+        if (cur && was) Object.keys(cur).forEach(k => { if (!['x', 'y', '_h', 'base'].includes(k) && JSON.stringify(cur[k]) !== JSON.stringify(was[k])) out[k] = cur[k]; });
+        return out;
+      };
+      const argsTouched = old.t && JSON.stringify(M.t.args) !== JSON.stringify(old.t.args);
+      M.t = merge(M.t, old.t, S.targets[M.id]); M.f = merge(M.f, old.f, fnOf(M.id));
+      if (!argsTouched) M.deps = deps(M.id);
+      rerenderModal();
+    }
   }
 }
 /* Re-render the open dialog without losing its scroll position or the comment being typed. */
@@ -1833,11 +2009,10 @@ function renderBanners() {
   const unc = LIVE ? arr(LIVE.uncommitted) : [];
   const el = $('#banners');
   el.innerHTML = out.map(([cls, text]) => `<div class="banner${cls ? ' ' + cls : ''}">${esc(text)}</div>`).join('')
-    + (unc.length && IS_LIVE ? `<div class="banner err" id="b-uncommitted" title="${esc(unc.join('\n'))}">${unc.length} verdict${unc.length === 1 ? '' : 's'} saved but not committed<button data-retry-all="1"${retrying ? ' disabled' : ''}>Retry</button></div>` : '')
-    + (PENDING ? `<div class="banner info">The project changed in R. This view has changes of its own (Build) that are not in your files, so it still shows the old version.<button data-reload="1">Show the new version (drops the changes)</button></div>` : '');
-  el.hidden = !out.length && !PENDING && !(unc.length && IS_LIVE);
+    + (unc.length && IS_LIVE ? `<div class="banner err" id="b-uncommitted" title="${esc(unc.join('\n'))}">${unc.length} verdict${unc.length === 1 ? '' : 's'} saved but not committed<button data-retry-all="1"${retrying ? ' disabled' : ''}>Retry</button></div>` : '');
+  el.hidden = !out.length && !(unc.length && IS_LIVE);
 }
-$('#banners').addEventListener('click', e => { if (e.target.closest('[data-retry-all]')) { retryCommit(null); return; } if (e.target.closest('[data-reload]') && PENDING) { applyModel(PENDING); renderBanners(); toast('Showing the version from R.'); } });
+$('#banners').addEventListener('click', e => { if (e.target.closest('[data-retry-all]')) retryCommit(null); });
 const hhmm = d => d && !isNaN(d) ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
 function renderSession() {
   const el = $('#session');
@@ -1855,7 +2030,7 @@ function renderChrome() {
   const rv = REVIEW();
   $('#mode-review').setAttribute('aria-pressed', String(rv));
   $('#mode-build').setAttribute('aria-pressed', String(!rv));
-  $('#btn-add').hidden = rv; $('#btn-undo').hidden = rv; $('#reset-section').hidden = rv;
+  $('#btn-add').hidden = rv; $('#btn-undo').hidden = rv; $('#reset-section').hidden = rv || IS_LIVE;
   $('#hint-plug').hidden = rv; $('#hint-dbl').textContent = rv ? 'review' : 'edit'; $('#empty-add').hidden = rv;
   $('#qa-help').innerHTML = !rv ? 'Switch to <b>Review</b> to record verdicts.'
     : IS_LIVE ? 'Record verdicts in the dialog of a target or with ✓ ? ✗ on its toolbar.'
@@ -1863,29 +2038,12 @@ function renderChrome() {
 }
 function setMode(m) {
   if (m === mode) return;
-  if (m === 'review' && viewDiffers()) return askDiscard();
-  hideConfirm();
   mode = m; hover = null;
   if (drag) drag = null;
   renderAll();
   if (M) rerenderModal();
-  toast(m === 'review' ? 'Review mode: the structure is read-only.' : 'Build mode: changes stay in this view.');
+  toast(m === 'review' ? 'Review mode: the structure is read-only.' : IS_LIVE ? 'Build mode: changes are written to your files.' : 'Build mode: changes stay in this view.');
 }
-/* In-page confirmation (window.confirm may be blocked in the Viewer or an artifact frame). */
-const confirmEl = $('#confirm');
-function askDiscard() {
-  const n = Math.max(1, undoStack.length);
-  $('#confirm-msg').textContent = `Discard ${n} view change${n === 1 ? '' : 's'} and switch to Review?`;
-  confirmEl.hidden = false; $('#confirm-no').focus();
-}
-function hideConfirm() { confirmEl.hidden = true; }
-$('#confirm-no').onclick = () => { hideConfirm(); toast('Still in Build mode.'); };
-$('#confirm-yes').onclick = () => {
-  hideConfirm();
-  applyModel(PENDING || RAW);   // the latest model this page has; the live page asks R once more below
-  setMode('review');
-  if (IS_LIVE) syncTo();
-};
 $('#mode-review').onclick = () => setMode('review');
 $('#mode-build').onclick = () => setMode('build');
 
@@ -1921,7 +2079,6 @@ setSidebar(pref.get('pipeworks-sidebar') !== '0', false);
 renderSession();
 renderBanners();
 updateDirty();
-BASE = structSnap();
 renderAll();
 const p0 = computeLayout(); vids().forEach(i => Object.assign(P(i), p0[i]));
 renderPositions(); view = fitFor(p0); applyView();
