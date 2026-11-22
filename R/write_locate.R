@@ -208,3 +208,19 @@ wb_composition <- function(p) {
 }
 
 item_base <- function(lines, line1, line2) md5_lines(lines[line1:line2])
+
+# Base hash of an item in the parsed file `p`: a function from the first line
+# of its contiguous roxygen block to its last line, a target over its call.
+# The model and the stale check of `apply_changes()` both use this. `NA` if
+# the file does not define the item.
+wb_item_base <- function(p, item) {
+  name <- sub("^[a-z]+:", "", item)
+  span <- if (startsWith(item, "function:")) {
+    f <- wb_function(p, name)
+    if (!is.null(f)) c(f$doc1, f$line2)
+  } else if (startsWith(item, "target:")) {
+    t <- wb_target(p, name)
+    if (!is.null(t)) c(t$line1, t$line2)
+  }
+  if (is.null(span)) NA_character_ else item_base(p$lines, span[1], span[2])
+}

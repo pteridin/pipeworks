@@ -85,23 +85,32 @@ assemble_model <- function(path, info) {
   target_edges <- edges[edges$from %in% target_names & edges$to %in% target_names, , drop = FALSE]
   fn_edges <- edges[edges$from %in% names(fns) & edges$to %in% target_names, , drop = FALSE]
 
-  lines_of <- local({
+  # `base`: hash of the raw lines of the item, checked before a write-back
+  # (same range as the stale check: `wb_item_base()`)
+  parsed <- local({
     cache <- list()
     function(file) {
-      if (is.null(cache[[file]])) cache[[file]] <<- read_utf8(file)
-      cache[[file]]
+      if (is.null(cache[[file]])) {
+        cache[[file]] <<- list(tryCatch(wb_parse(read_text(file)$lines, file), error = function(e) NULL))
+      }
+      cache[[file]][[1]]
     }
   })
-  # `base`: hash of the raw lines of the item, checked before a write-back
+  base_in <- function(file, item) {
+    p <- parsed(file)
+    b <- if (is.null(p)) NA_character_ else wb_item_base(p, item)
+    if (is.na(b)) NULL else b
+  }
   for (name in names(fns)) {
     f <- fns[[name]]
-    fns[[name]]["base"] <- list(item_base(lines_of(f$file), f$doc_line, f$end_line))
+    fns[[name]]["base"] <- list(base_in(f$file, paste0("function:", name)))
   }
   base_of <- function(t_name, map) {
     if (is.null(items)) return(NULL)
-    it <- items[items$id == target_item(t_name, map), , drop = FALSE]
+    id <- target_item(t_name, map)
+    it <- items[items$id == id, , drop = FALSE]
     if (!nrow(it)) return(NULL)
-    item_base(lines_of(it$file[1]), it$line1[1], it$line2[1])
+    base_in(it$file[1], id)
   }
 
   targets <- lapply(seq_len(nrow(manifest)), function(i) {
@@ -380,7 +389,7 @@ item_texts <- function(items, lines_of, ids) {
 read_source_files <- function(targets) {
   r_files <- list.files("R", pattern = "\\.[Rr]$", recursive = TRUE, all.files = TRUE)
   paths <- c("_targets.R", file.path("R", sort(r_files, method = "radix")))
-  sources <- unlist(lapply(targets, function(t) t$source))
+  sources <- as.character(unlist(lapply(targets, function(t) t$source)))
   paths <- unique(c(paths, sources[file.exists(sources)]))
   lapply(paths, function(p) list(path = p, text = paste(readLines(p, warn = FALSE, encoding = "UTF-8"), collapse = "\n")))
 }

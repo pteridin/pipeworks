@@ -182,7 +182,7 @@ test_that("functions and targets carry a base hash of their raw lines", {
   m <- read_example()
   f <- by_name(m$functions, "read_survey")
   lines <- read_utf8(file.path(m$root, f$file))
-  expect_equal(f$base, item_base(lines, f$doc_line, f$end_line))
+  expect_equal(f$base, wb_base_of(m$root, "function:read_survey"))
   expect_equal(by_name(m$targets, "model_fit_full")$base, by_name(m$targets, "model_fit_base")$base)
   with_item <- Filter(function(t) !is.null(t$block), m$targets)
   expect_gt(length(with_item), 0)

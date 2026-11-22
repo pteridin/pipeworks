@@ -12,3 +12,11 @@ wb_example <- function(env = parent.frame()) {
 }
 
 wb_lines <- function(files, rel) wb_files_get(files, rel)$lines
+
+# Base of an item as the model computes it (shared helper wb_item_base()).
+wb_base_of <- function(path, item) {
+  files <- wb_files(path)
+  r <- if (startsWith(item, "function:")) wb_find_function(files, sub("^function:", "", item)) else
+    wb_find_target(files, sub("^target:", "", item))
+  wb_item_base(r$p, item)
+}

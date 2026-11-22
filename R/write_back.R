@@ -644,3 +644,175 @@ chg_add_target <- function(files, ch) {
   blank <- length(lines) && nzchar(trimws(lines[length(lines)]))
   wb_put(files, block, c(lines, if (blank) "", new))
 }
+
+# --- the transaction ---------------------------------------------------------
+
+wb_stale <- function(item, file, message = NULL) {
+  if (is.null(message)) {
+    message <- sprintf("%s in %s changed since the page loaded it. The view is refreshed; try again.", item, file)
+  }
+  stop(structure(class = c("pipeworks_stale", "error", "condition"),
+    list(message = message, call = NULL, item = item, file = file)))
+}
+
+# kind -> (item prefix, required string fields, required list fields)
+WB_KINDS <- list(
+  set_doc = list(item = "function:", str = c("fn", "field"), lst = character()),
+  set_formals = list(item = "function:", str = "fn", lst = "formals"),
+  set_body = list(item = "function:", str = c("fn", "body"), lst = character()),
+  set_target_arg = list(item = "target:", str = c("target", "arg"), lst = character()),
+  set_call = list(item = "target:", str = "target", lst = "args"),
+  rename_function = list(item = "function:", str = c("fn", "to"), lst = character()),
+  rename_target = list(item = "target:", str = c("target", "to"), lst = character()),
+  remove_target = list(item = "target:", str = "target", lst = character()),
+  add_target = list(item = NULL, str = c("target", "block"), lst = "fn")
+)
+
+wb_is_string <- function(x) is.character(x) && length(x) == 1L && !is.na(x) && nzchar(x)
+
+wb_validate <- function(changes) {
+  if (!is.list(changes) || !length(changes)) wb_bad("No changes to write.")
+  for (ch in changes) {
+    kind <- if (is.list(ch)) ch$kind
+    if (!wb_is_string(kind) || is.null(WB_KINDS[[kind]])) {
+      wb_bad(sprintf("Unknown change kind %s.", if (wb_is_string(kind)) kind else "(missing)"))
+    }
+    spec <- WB_KINDS[[kind]]
+    need <- c(if (!is.null(spec$item)) c("item", "base"), spec$str)
+    for (f in need) {
+      if (!wb_is_string(ch[[f]])) wb_bad(sprintf("%s: field %s must be a string.", kind, f))
+    }
+    for (f in spec$lst) {
+      if (!is.list(ch[[f]])) wb_bad(sprintf("%s: field %s must be a list.", kind, f))
+    }
+    if (!is.null(spec$item)) {
+      own <- ch[[if (startsWith(spec$item, "function:")) "fn" else "target"]]
+      if (!identical(ch$item, paste0(spec$item, own))) {
+        wb_bad(sprintf("%s: item %s does not match %s.", kind, ch$item, own))
+      }
+    }
+    if (kind == "set_doc" && identical(ch$field, "param") && !wb_is_string(ch$param)) {
+      wb_bad("set_doc: field param needs a param name.")
+    }
+  }
+  invisible(changes)
+}
+
+# Stale check against the files as they are on disk (`orig`), so changes
+# earlier in the request cannot make a later item look stale.
+wb_check_base <- function(orig, ch) {
+  r <- tryCatch(
+    if (startsWith(ch$item, "function:")) wb_find_function(orig, sub("^function:", "", ch$item)) else
+      wb_find_target(orig, sub("^target:", "", ch$item)),
+    pipeworks_bad_change = function(e) {
+      if (grepl("not found\\.$", conditionMessage(e))) NULL else stop(e)
+    }
+  )
+  if (is.null(r)) wb_stale(ch$item, NA_character_)
+  if (!identical(wb_item_base(r$p, ch$item), ch$base)) wb_stale(ch$item, r$rel)
+  invisible(r)
+}
+
+apply_changes <- function(path, changes) {
+  wb_validate(changes)
+  orig <- wb_files(path)
+  files <- orig
+  touched <- character()
+  for (ch in changes) {
+    if (!is.null(ch$item) && !ch$item %in% touched) {
+      wb_check_base(orig, ch)
+      touched <- c(touched, ch$item)
+    }
+    files <- get(paste0("chg_", ch$kind))(files, ch)
+  }
+  rels <- names(files)
+  disk <- function(rel) file.path(path, rel)
+  before <- lapply(rels, function(rel) if (file.exists(disk(rel))) read_text(disk(rel)))
+  names(before) <- rels
+  changed <- vapply(rels, function(rel) {
+    is.null(before[[rel]]) || !identical(before[[rel]]$lines, files[[rel]]$lines)
+  }, logical(1))
+  rels <- rels[changed]
+  for (rel in rels) {
+    tryCatch(wb_parse(files[[rel]]$lines, rel), error = function(e) {
+      stop(sprintf("Bug: the change would break %s; nothing was written.", rel), call. = FALSE)
+    })
+  }
+  written <- character()
+  tryCatch({
+    for (rel in rels) {
+      write_text(disk(rel), files[[rel]])
+      written <- c(written, rel)
+    }
+  }, error = function(e) {
+    for (rel in written) {
+      if (is.null(before[[rel]])) unlink(disk(rel)) else try(write_text(disk(rel), before[[rel]]), silent = TRUE)
+    }
+    stop(e)
+  })
+  undo <- lapply(rels, function(rel) list(
+    before = if (is.null(before[[rel]])) character() else before[[rel]]$lines,
+    after = files[[rel]]$lines, existed = !is.null(before[[rel]])
+  ))
+  names(undo) <- rels
+  notes <- attr(files, "notes")
+  list(files = rels, notes = if (is.null(notes)) character() else as.character(notes), undo = undo)
+}
+
+# First index at which `needle` occurs in `hay` (all of them).
+wb_find_seq <- function(hay, needle) {
+  n <- length(needle)
+  if (!n || length(hay) < n) return(integer())
+  hits <- which(hay == needle[1])
+  hits[vapply(hits, function(i) i + n - 1L <= length(hay) && identical(hay[i:(i + n - 1L)], needle), logical(1))]
+}
+
+# Where `after` (a region of the edit) sits in `cur`: the single occurrence,
+# widened by context lines of the kept text until it is unique. `NULL` if it
+# is gone or still ambiguous.
+wb_undo_place <- function(cur, prefix, region, suffix) {
+  for (k in 0:max(length(prefix), length(suffix))) {
+    pre <- utils::tail(prefix, min(k, length(prefix)))
+    suf <- utils::head(suffix, min(k, length(suffix)))
+    needle <- c(pre, region, suf)
+    if (!length(needle)) next
+    hits <- wb_find_seq(cur, needle)
+    if (length(hits) == 1L) return(list(from = hits + length(pre), n = length(region)))
+    if (!length(hits)) return(NULL)
+  }
+  NULL
+}
+
+undo_changes <- function(path, undo) {
+  stale <- function(rel) wb_stale(NA_character_, rel, sprintf("%s changed since that edit; undo it in RStudio.", rel))
+  plan <- list()
+  for (rel in names(undo)) {
+    u <- undo[[rel]]
+    file <- file.path(path, rel)
+    if (!file.exists(file)) stale(rel)
+    txt <- read_text(file)
+    if (!isTRUE(u$existed)) {
+      if (!identical(txt$lines, u$after)) stale(rel)
+      plan[[rel]] <- list(delete = TRUE)
+      next
+    }
+    b <- u$before
+    a <- u$after
+    m <- min(length(a), length(b))
+    pre <- 0L
+    while (pre < m && identical(a[pre + 1L], b[pre + 1L])) pre <- pre + 1L
+    suf <- 0L
+    while (suf < m - pre && identical(a[length(a) - suf], b[length(b) - suf])) suf <- suf + 1L
+    region <- a[seq_len(length(a) - pre - suf) + pre]
+    at <- wb_undo_place(txt$lines, a[seq_len(pre)], region, a[seq_len(suf) + length(a) - suf])
+    if (is.null(at)) stale(rel)
+    restore <- b[seq_len(length(b) - pre - suf) + pre]
+    lines <- txt$lines
+    txt$lines <- c(lines[seq_len(at$from - 1L)], restore, lines[seq_len(length(lines) - at$from - at$n + 1L) + at$from + at$n - 1L])
+    plan[[rel]] <- list(txt = txt)
+  }
+  for (rel in names(plan)) {
+    if (isTRUE(plan[[rel]]$delete)) unlink(file.path(path, rel)) else write_text(file.path(path, rel), plan[[rel]]$txt)
+  }
+  names(plan)
+}

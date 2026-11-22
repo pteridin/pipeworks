@@ -348,3 +348,146 @@ test_that("add_target into an empty block list and without a composition", {
   expect_error(chg_add_target(x$files, list(target = "clean_data", block = "R/model.R", fn = new_fn("g"),
     args = list(), format = NULL, pattern = NULL)), "clean_data", class = "pipeworks_bad_change")
 })
+
+# --- Task 6: transaction and undo ---------------------------------------------
+
+set_title <- function(x, fn = "read_survey", value = "X", base = wb_base_of(x$path, paste0("function:", fn))) {
+  list(kind = "set_doc", item = paste0("function:", fn), base = base, fn = fn, field = "title", value = value)
+}
+
+test_that("a stale base refuses the whole request and writes nothing", {
+  x <- wb_example(); md5 <- tools::md5sum(file.path(x$path, "R/import.R"))
+  err <- tryCatch(apply_changes(x$path, list(set_title(x, base = "0"))), pipeworks_stale = function(e) e)
+  expect_s3_class(err, "pipeworks_stale")
+  expect_equal(err$item, "function:read_survey"); expect_equal(err$file, "R/import.R")
+  expect_match(conditionMessage(err), "function:read_survey in R/import.R changed since the page loaded it. The view is refreshed; try again.", fixed = TRUE)
+  expect_equal(tools::md5sum(file.path(x$path, "R/import.R")), md5)
+})
+
+test_that("a missing item is stale", {
+  x <- wb_example()
+  ch <- list(kind = "remove_target", item = "target:nope", base = "0", target = "nope")
+  expect_error(apply_changes(x$path, list(ch)), class = "pipeworks_stale")
+})
+
+test_that("invalid requests are refused before anything is touched", {
+  x <- wb_example()
+  expect_error(apply_changes(x$path, list()), class = "pipeworks_bad_change")
+  expect_error(apply_changes(x$path, list(list(kind = "explode"))), class = "pipeworks_bad_change")
+  ch <- set_title(x); ch$fn <- NULL
+  expect_error(apply_changes(x$path, list(ch)), class = "pipeworks_bad_change")
+  ch <- set_title(x); ch$base <- 1
+  expect_error(apply_changes(x$path, list(ch)), class = "pipeworks_bad_change")
+})
+
+test_that("an edit of another function in the same file does not block the write", {
+  x <- wb_example(); base <- wb_base_of(x$path, "function:read_survey")
+  f <- file.path(x$path, "R/import.R")
+  l <- read_utf8(f); l[l == "  dplyr::filter(data, .data$area == .env$area)"] <- "  dplyr::filter(data, area == .env$area)"
+  writeLines(l, f)
+  res <- apply_changes(x$path, list(set_title(x, base = base)))
+  expect_equal(res$files, "R/import.R"); expect_equal(res$notes, character())
+  expect_equal(read_utf8(f)[1], "#' X")
+})
+
+test_that("the base is checked only the first time an item is touched", {
+  x <- wb_example(); b <- wb_base_of(x$path, "function:read_survey")
+  c1 <- set_title(x, base = b); c2 <- set_title(x, value = "Y", base = "0")
+  res <- apply_changes(x$path, list(c1, c2))
+  expect_equal(read_utf8(file.path(x$path, "R/import.R"))[1], "#' Y")
+})
+
+test_that("a rename does not make later items stale against the original", {
+  x <- wb_example()
+  res <- apply_changes(x$path, list(list(kind = "rename_function", item = "function:rescale01",
+    base = wb_base_of(x$path, "function:rescale01"), fn = "rescale01", to = "rescale_unit")))
+  expect_true("R/utils.R" %in% res$files)
+})
+
+test_that("CRLF survives apply and undo", {
+  x <- wb_example(); f <- file.path(x$path, "R/report.R")
+  orig <- charToRaw(paste0(paste(read_utf8(f), collapse = "\r\n"), "\r\n")); writeBin(orig, f)
+  res <- apply_changes(x$path, list(set_title(x, "score_histogram", "Histogram")))
+  txt <- rawToChar(readBin(f, "raw", 1e6))
+  expect_false(grepl("[^\r]\n", txt)); expect_match(txt, "^#' Histogram\r\n")
+  undo_changes(x$path, res$undo); expect_equal(readBin(f, "raw", 1e6), orig)
+})
+
+test_that("a failing second file restores the first", {
+  x <- wb_example(); base_write <- write_text
+  rels <- c("R/utils.R", "R/model.R")
+  before <- lapply(rels, function(r) read_utf8(file.path(x$path, r)))
+  local_mocked_bindings(write_text = function(file, txt) if (grepl("model", file)) stop("disk full") else base_write(file, txt))
+  expect_error(apply_changes(x$path, list(list(kind = "rename_function", item = "function:rescale01",
+    base = wb_base_of(x$path, "function:rescale01"), fn = "rescale01", to = "rescale_unit"))), "disk full")
+  expect_equal(lapply(rels, function(r) read_utf8(file.path(x$path, r))), before)
+})
+
+test_that("a change that would break a file writes nothing", {
+  x <- wb_example(); f <- file.path(x$path, "R/import.R"); md5 <- tools::md5sum(f)
+  ch <- list(kind = "set_body", item = "function:read_survey", base = wb_base_of(x$path, "function:read_survey"),
+    fn = "read_survey", body = "if (")
+  expect_error(apply_changes(x$path, list(ch)))
+  expect_equal(tools::md5sum(f), md5)
+})
+
+test_that("undo restores the text and refuses after an intervening edit", {
+  x <- wb_example(); f <- file.path(x$path, "R/import.R"); orig <- read_utf8(f)
+  res <- apply_changes(x$path, list(set_title(x)))
+  expect_equal(undo_changes(x$path, res$undo), "R/import.R")
+  expect_equal(read_utf8(f), orig)
+  res <- apply_changes(x$path, list(set_title(x)))
+  l <- read_utf8(f); l[1] <- "#' By hand"; writeLines(l, f)
+  err <- tryCatch(undo_changes(x$path, res$undo), pipeworks_stale = function(e) e)
+  expect_s3_class(err, "pipeworks_stale")
+  expect_match(conditionMessage(err), "R/import.R changed since that edit; undo it in RStudio.", fixed = TRUE)
+  expect_equal(read_utf8(f), l)
+})
+
+test_that("undo keeps edits elsewhere in the file and deletes created files", {
+  x <- wb_example(); f <- file.path(x$path, "R/import.R")
+  res <- apply_changes(x$path, list(set_title(x)))
+  l <- read_utf8(f); writeLines(c(l, "# tail"), f)
+  undo_changes(x$path, res$undo)
+  expect_equal(read_utf8(f)[length(read_utf8(f))], "# tail")
+  expect_false(identical(read_utf8(f)[1], "#' X"))
+  undo <- list("R/new.R" = list(before = character(), after = c("a <- 1"), existed = FALSE))
+  writeLines("a <- 1", file.path(x$path, "R/new.R"))
+  undo_changes(x$path, undo)
+  expect_false(file.exists(file.path(x$path, "R/new.R")))
+  writeLines(c("a <- 1", "b"), file.path(x$path, "R/new.R"))
+  expect_error(undo_changes(x$path, undo), class = "pipeworks_stale")
+})
+
+test_that("undo of a pure deletion finds its place by context", {
+  dir <- local_project(list("R/a.R" = c("a <- 1", "c <- 3")))
+  undo <- list("R/a.R" = list(before = c("a <- 1", "b <- 2", "c <- 3"), after = c("a <- 1", "c <- 3"), existed = TRUE))
+  undo_changes(dir, undo)
+  expect_equal(read_utf8(file.path(dir, "R/a.R")), c("a <- 1", "b <- 2", "c <- 3"))
+})
+
+test_that("the model base equals the stale-check base, also with a blank line below the roxygen", {
+  skip_if_no_targets()
+  dir <- local_project(list(
+    "_targets.R" = c("library(targets)", "tar_source()", "list(pipeline_a)"),
+    "R/a.R" = c("#' Title", "#'", "#' @param x Input.", "", "f <- function(x) x", "",
+      "pipeline_a <- list(", "  tar_target(t, f(1), pattern = map(x), description = \"d\"),", "  tar_target(x, c(1, 2))", ")")
+  ))
+  m <- read_pipeline(dir, status = FALSE)
+  fb <- by_name(m$functions, "f")$base
+  expect_equal(fb, wb_base_of(dir, "function:f"))
+  expect_equal(by_name(m$targets, "t")$base, wb_base_of(dir, "target:t"))
+  res <- apply_changes(dir, list(list(kind = "set_doc", item = "function:f", base = fb, fn = "f", field = "title", value = "New")))
+  expect_equal(res$files, "R/a.R")
+})
+
+test_that("a rename_target request round-trips through read_pipeline()", {
+  skip_if_no_targets()
+  path <- local_example_repo()
+  m <- read_pipeline(path, status = FALSE)
+  res <- apply_changes(path, list(list(kind = "rename_target", item = "target:clean_data",
+    base = by_name(m$targets, "clean_data")$base, target = "clean_data", to = "tidy_data")))
+  expect_true(length(res$files) >= 1L)
+  m2 <- read_pipeline(path, status = FALSE)
+  nm <- vapply(m2$targets, function(t) t$name, ""); expect_true("tidy_data" %in% nm); expect_false("clean_data" %in% nm)
+})
