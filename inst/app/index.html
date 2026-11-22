@@ -890,12 +890,16 @@ function removeTarget(id) {
   if (REVIEW()) return toast(BUILD_ONLY);
   if (writing()) return;
   const before = snap(); if (!IS_LIVE) push(before);
-  const name = nm(id);
-  downs(id).forEach(d => { const t = S.targets[d]; t.args = t.args.filter(a => !(a.kind === 'target' && a.refs[0] === id)); invalidate(d); });
-  S.edges = S.edges.filter(e => e.from !== id && e.to !== id);
-  delete S.targets[id];
+  // live: a variant is written as its template, so removing it removes every variant of that template
+  const mp = S.targets[id]?.map, gone = IS_LIVE && mp ? ids().filter(i => { const o = S.targets[i].map; return o && o.id === mp.id && o.template === mp.template; }) : [id];
+  const name = gone.length > 1 ? `${mp.template} (${gone.length} variants)` : nm(id);
+  gone.forEach(g => {
+    downs(g).forEach(d => { const t = S.targets[d]; if (!t) return; t.args = t.args.filter(a => !(a.kind === 'target' && a.refs[0] === g)); invalidate(d); });
+    S.edges = S.edges.filter(e => e.from !== g && e.to !== g);
+    delete S.targets[g];
+  });
   S.sel = null; renderAll();
-  if (IS_LIVE) return liveCommit(before, `Remove ${name}`);
+  if (IS_LIVE) return liveCommit(before, `Remove ${name}`, null, gone.length > 1 ? `Removed ${name}.` : '');
   toast(`Removed ${name}.`, true);
 }
 
@@ -918,14 +922,26 @@ function diffChanges(a, b) {
   const once = k => !seen.has(k) && seen.add(k);
   const key = t => (t.map ? t.map.template : t.name);
   const oldName = id => (a.targets[id] || b.targets[id])?.name ?? id;
-  // the arguments as written in the call: a variant's own values go back to the template's symbols
-  const callArgs = t => t.args.map(x => {
+  // the arguments as they are (target refs by id): what tells whether a call changed
+  const rawArgs = t => JSON.stringify(t.args.map(x => [x.name, x.kind === 'target' ? '@' + x.refs[0] : x.value, !!x.named]));
+  // the arguments as written in the call. A variant's own values go back to its template's symbols;
+  // a value that cannot be mapped back exactly (numeric or multi-column map values) is refused.
+  const callArgs = (snapT, t) => t.args.map(x => {
     let value = x.value;
     if (x.kind === 'target') {
       const r = a.targets[x.refs[0]] || b.targets[x.refs[0]];
       value = oldName(x.refs[0]);
       if (t.map && r && r.map && r.map.id === t.map.id && r.map.variant === t.map.variant) value = r.map.template;
-    } else if (t.map && MAPS[t.map.id]?.param && x.value === JSON.stringify(String(t.map.variant))) value = MAPS[t.map.id].param;
+    } else if (t.map) {
+      const m = MAPS[t.map.id];
+      if (m && m.param && x.value === JSON.stringify(String(t.map.variant))) value = m.param;
+      else {
+        // a literal of the template is the same in every variant
+        const sib = Object.values(snapT).filter(o => o !== t && o.map && o.map.id === t.map.id && o.map.template === t.map.template);
+        const same = sib.length && sib.every(o => { const y = o.args.find(z => z.name === x.name); return y && y.kind !== 'target' && y.value === x.value; });
+        if (!same) throw new Error(`${t.name} is a variant of ${t.map.template}; change its arguments in RStudio.`);
+      }
+    }
     return { name: x.name, value, named: !!x.named };
   });
   const orNull = v => (v == null || !String(v).trim() ? null : v);
@@ -945,10 +961,7 @@ function diffChanges(a, b) {
     if ((ta.format || 'rds') !== (tb.format || 'rds') && once(`fmt:${k}`)) tSets.push({ kind: 'set_target_arg', ...own, arg: 'format', value: tb.format === 'rds' ? null : tb.format || null });
     if ((ta.pattern || '') !== (tb.pattern || '') && once(`pat:${k}`)) tSets.push({ kind: 'set_target_arg', ...own, arg: 'pattern', value: orNull(tb.pattern) });
     if (ta.mode === 'expression' && (ta.description || '') !== (tb.description || '') && once(`desc:${k}`)) tSets.push({ kind: 'set_target_arg', ...own, arg: 'description', value: orNull(tb.description) });
-    if (ta.mode === 'function') {
-      const args = callArgs(tb);
-      if (JSON.stringify(callArgs(ta)) !== JSON.stringify(args) && once(`call:${k}`)) tSets.push({ kind: 'set_call', ...own, args });
-    }
+    if (ta.mode === 'function' && rawArgs(ta) !== rawArgs(tb) && once(`call:${k}`)) tSets.push({ kind: 'set_call', ...own, args: callArgs(b.targets, tb) });
     // the function behind the target (once per function, matched through its targets)
     const fa = ta.mode === 'function' ? a.fns[ta.fn] : null, fb = tb.mode === 'function' ? b.fns[tb.fn] : null;
     if (!fa || !fb || !once(`fn:${fa.name}`)) return;
@@ -972,7 +985,7 @@ function diffChanges(a, b) {
     adds.push({
       kind: 'add_target', target: t.name, block: t.block,
       fn: { name: f.name, title: f.title, description: f.description, returns: f.returns, family: f.family, params: { ...f.params }, formals: f.formals.map(x => ({ name: x.name, default: x.default ?? null })), body: f.body },
-      args: callArgs(t), format: t.format === 'rds' ? null : t.format || null, pattern: orNull(t.pattern),
+      args: callArgs(b.targets, t), format: t.format === 'rds' ? null : t.format || null, pattern: orNull(t.pattern),
     });
   });
   return [...tSets, ...fSets, ...renF, ...renT, ...rems, ...adds];
@@ -992,7 +1005,7 @@ function reopenDialog(dlg) {
     renderAll();
   }
   if (!S.targets[dlg.id]) return;
-  M = { id: dlg.id, t: dlg.t, f: dlg.f, deps: dlg.deps, isNew: dlg.isNew, before, lastFocus: null };
+  M = { id: dlg.id, t: dlg.t, f: dlg.f, deps: dlg.deps, isNew: dlg.isNew, before, start: dlg.start, notice: dlg.notice, lastFocus: null };
   renderModal(); overlay.hidden = false;
 }
 function refuseLocal(msg, restore, dlg) {
@@ -1001,7 +1014,7 @@ function refuseLocal(msg, restore, dlg) {
   renderAll(); reopenDialog(dlg); toast(msg);
 }
 /* `before`: snapshot before the action. `dlg`: the dialog state when the action came from a dialog. */
-function liveCommit(before, label, dlg) {
+function liveCommit(before, label, dlg, said = '') {
   const a = JSON.parse(before);
   let changes;
   try { changes = diffChanges(a, { targets: S.targets, fns: S.fns, edges: S.edges }); }
@@ -1024,7 +1037,7 @@ function liveCommit(before, label, dlg) {
       .filter(i => !S.targets[i] && a.targets[i].mode === 'function').map(i => a.targets[i].fn)
       .filter(fn => fn && !usedBy(fn).length && !arr(S.fns[fn]?.called_by).length);
     const files = arr(r.files);
-    toast([`Written to ${files.length ? files.join(', ') : 'your files'}.`, ...arr(r.notes), ...[...new Set(unused)].map(fn => `${fn}() is now unused.`)].join(' '), true);
+    toast([...(said ? [said] : []), `Written to ${files.length ? files.join(', ') : 'your files'}.`, ...arr(r.notes), ...[...new Set(unused)].map(fn => `${fn}() is now unused.`)].join(' '), true);
   }).catch(e => {
     BUSY = false; updateDirty();
     if (e.kind === 'lost' || e.kind === 'refused') setConn(e);
@@ -1361,6 +1374,7 @@ function openModal(id, opts = {}) {
   const t = S.targets[id]; if (!t) return;
   const f = fnOf(id);
   M = { id, t: JSON.parse(JSON.stringify(t)), f: f ? JSON.parse(JSON.stringify(f)) : null, deps: deps(id), isNew: !!opts.isNew, before: opts.before, lastFocus: document.activeElement };
+  M.start = clone({ t: M.t, f: M.f, deps: M.deps });   // what the dialog opened with: Apply sends only what differs from it
   renderModal(); overlay.hidden = false;
   setTimeout(() => { if (!M) return; const el = M.isNew ? $('#m-name') : ($('#m-title') || $('#m-desc')); if (el) { el.focus(); if (M.isNew) el.select(); } }, 20);
 }
@@ -1403,7 +1417,7 @@ function renderModal() {
       <span class="err-msg" id="m-err" hidden></span>
     </header>
     <div class="m-body">
-      <div class="m-col">${qaSection(M.id)}${mapNote}${f ? `
+      <div class="m-col">${M.notice ? `<div class="notice" id="m-notice" role="status">${esc(M.notice)}</div>` : ''}${qaSection(M.id)}${mapNote}${f ? `
         <h3>Documentation <small>roxygen block of <code>${esc(f.name)}()</code></small></h3>
         ${others.length ? `<div class="notice"><code>${esc(f.name)}()</code> is also used by ${others.map(o => `<code>${esc(nm(o))}</code>`).join(', ')}. Documentation and body changes apply to all of them.</div>` : ''}
         <div class="field"><label for="m-title">Title <code>#' first line</code></label>
@@ -1426,7 +1440,7 @@ function renderModal() {
         </div>` : `
         <h3>Documentation <small>${t.mode === 'factory' ? 'targets created by a factory have no roxygen block' : 'stored in <code>tar_target(description = )</code>'}</small></h3>
         <div class="field"><label for="m-desc">Description</label>
-          <textarea class="txt" id="m-desc" data-tf="description" rows="3"${ro}>${esc(t.description)}</textarea></div>
+          <textarea class="txt" id="m-desc" data-tf="description" rows="3"${ro || (t.mode === 'factory' && IS_LIVE ? ' readonly title="A target factory has no description to write"' : '')}>${esc(t.description)}</textarea></div>
         <p class="help">${t.mode === 'factory' ? `Its inputs come from <code>tar_read()</code> calls in <code>${esc(t.source)}</code>.` : `It is shown in the box of <code>${esc(blockName(t.block))}</code>, where it is written.`}</p>`}
       </div>
       <div class="m-col">${f ? `
@@ -1549,7 +1563,15 @@ function saveModal() {
   const err = nameError(t.name.trim(), 'target') || (f ? nameError(f.name.trim(), 'function', orig.name) : '');
   const box = $('#m-err'); box.hidden = !err; box.textContent = err;
   if (err) return;
-  const pre = snap(), before = M.isNew ? M.before : pre;
+  const pre = snap();
+  let before = M.isNew ? M.before : pre;
+  if (IS_LIVE && !M.isNew && M.start) {
+    // live: the change is what the user did in the dialog (M.start -> M), against the current bases
+    const p = JSON.parse(pre), ct = p.targets[M.id], sf = M.start.f;
+    if (ct) p.targets[M.id] = { ...clone(M.start.t), x: ct.x, y: ct.y, base: ct.base };
+    if (sf && p.fns[sf.name]) p.fns[sf.name] = { ...clone(sf), base: p.fns[sf.name].base };
+    before = JSON.stringify(p);
+  }
   if (!IS_LIVE) push(before);
   const cur = S.targets[M.id];
   if (M.locked) { ['name', 'description', 'format', 'pattern', 'args'].forEach(k => { t[k] = JSON.parse(JSON.stringify(cur[k])); }); M.deps = deps(M.id); }
@@ -1569,7 +1591,7 @@ function saveModal() {
   if (codeChanged || cur.pattern !== t.pattern) invalidate(M.id);
   const wasNew = M.isNew;
   // what a refusal needs to open the dialog again with the user's text
-  const dlg = IS_LIVE ? { id: M.id, t: clone(M.t), f: clone(M.f), deps: [...M.deps], isNew: wasNew, before: M.before, pre } : null;
+  const dlg = IS_LIVE ? { id: M.id, t: clone(M.t), f: clone(M.f), deps: [...M.deps], isNew: wasNew, before: M.before, pre, start: M.start, notice: M.notice } : null;
   closeModal(true);
   renderAll();
   if (wasNew) autoLayout();
@@ -1880,7 +1902,9 @@ async function fetchModel() {
   // Review always shows the latest model. Build holds back the model while a write is open and
   // until R has rebuilt the model after it (building done, a version later than the write's).
   if (!REVIEW() && (BUSY || m.live.building || (WAIT != null && !(m.live.version > WAIT)))) {
-    LIVE = m.live; renderAll(); return;
+    // while a request is open, keep the version so the poll asks again once it is answered
+    LIVE = BUSY ? { ...m.live, version: LIVE.version } : m.live; MODEL_ERROR = m.model_error || null;
+    renderAll(); return;
   }
   WAIT = null; WRITTEN.clear();
   applyModel(m);
@@ -1888,7 +1912,6 @@ async function fetchModel() {
 /* Swap in a new model, keeping selection, folded maps, mode, viewport, node positions and an open dialog. */
 function applyModel(m) {
   const keepPos = currentPos(), keepSel = S.sel, keepView = { ...view };
-  const old = M ? { t: S.targets[M.id] ? clone(S.targets[M.id]) : null, f: fnOf(M.id) ? clone(fnOf(M.id)) : null } : null;
   const draft = M && M.isNew && S.targets[M.id] ? { t: S.targets[M.id], f: fnOf(M.id), edges: S.edges.filter(e => e.to === M.id) } : null;
   setModel(m);
   WRITING.clear();
@@ -1909,20 +1932,53 @@ function applyModel(m) {
   }
   if (M) {
     if (!S.targets[M.id]) closeModal(true);
-    else if (!M.isNew) {
-      // fields the user has not touched take the new values; touched ones keep the user's text
-      const merge = (cur, was, now) => {
-        if (!now) return null;
-        const out = clone(now);
-        if (cur && was) Object.keys(cur).forEach(k => { if (!['x', 'y', '_h', 'base'].includes(k) && JSON.stringify(cur[k]) !== JSON.stringify(was[k])) out[k] = cur[k]; });
-        return out;
-      };
-      const argsTouched = old.t && JSON.stringify(M.t.args) !== JSON.stringify(old.t.args);
-      M.t = merge(M.t, old.t, S.targets[M.id]); M.f = merge(M.f, old.f, fnOf(M.id));
-      if (!argsTouched) M.deps = deps(M.id);
-      rerenderModal();
-    }
+    else if (!M.isNew) { mergeDialog(); rerenderModal(); }
   }
+}
+/* The open dialog follows the new model field by field: a field the user has not touched (equal to
+   M.start) takes the new value; a touched one keeps the user's text. Params, formals and arguments
+   merge per element. Then M.start is the new model, so Apply sends only the user's own edits. */
+function mergeDialog() {
+  const st = M.start, nt = S.targets[M.id], nf = fnOf(M.id);
+  if (!st) return;
+  const eq = (x, y) => JSON.stringify(x ?? null) === JSON.stringify(y ?? null);
+  // `changed`: an item of the dialog changed in the files; `touched`: the user edited a field
+  let changed = null, touched = false;
+  const pick = (user, start, now, item) => {
+    if (!eq(now, start)) changed ||= item;
+    if (eq(user, start)) return clone(now ?? null);
+    touched = true; return user;
+  };
+  const list = (user, start, now, item) => {
+    const by = (l, k) => arr(l).find(x => x.name === k);
+    if (!eq(now, start)) changed ||= item;
+    if (!eq(user, start)) touched = true;
+    const out = arr(now).filter(x => !(by(start, x.name) && !by(user, x.name))).map(x => {
+      const s0 = by(start, x.name), u = by(user, x.name);
+      return !u || !s0 || eq(u, s0) ? clone(x) : u;
+    });
+    arr(user).forEach(u => { if (!by(start, u.name) && !by(out, u.name)) out.push(u); });
+    return out;
+  };
+  const ti = `target:${nt.map ? nt.map.template : nt.name}`, t = clone(nt);
+  ['name', 'description', 'format', 'pattern'].forEach(k => { t[k] = pick(M.t[k], st.t[k], nt[k], ti); });
+  t.args = list(M.t.args, st.t.args, nt.args, ti);
+  const added = M.deps.filter(d => !st.deps.includes(d)), removed = st.deps.filter(d => !M.deps.includes(d));
+  M.deps = [...new Set([...deps(M.id).filter(d => !removed.includes(d)), ...added.filter(d => S.targets[d])])];
+  let f = nf ? clone(nf) : null;
+  if (f && M.f && st.f) {
+    const fi = `function:${nf.name}`;
+    ['name', 'title', 'description', 'returns', 'family', 'body'].forEach(k => { f[k] = pick(M.f[k], st.f[k], nf[k], fi); });
+    f.params = {};
+    new Set([...Object.keys(M.f.params), ...Object.keys(st.f.params), ...Object.keys(nf.params)]).forEach(k => {
+      const v = pick(M.f.params[k] || null, st.f.params[k] || null, nf.params[k] || null, fi);
+      if (v != null) f.params[k] = v;
+    });
+    f.formals = list(M.f.formals, st.f.formals, nf.formals, fi);
+  }
+  M.t = t; M.f = f;
+  M.start = clone({ t: nt, f: nf || null, deps: deps(M.id) });
+  if (changed && touched) M.notice = `${changed} changed in your files since you opened this dialog. Your edits are kept; untouched fields were updated.`;
 }
 /* Re-render the open dialog without losing its scroll position or the comment being typed. */
 function rerenderModal() {

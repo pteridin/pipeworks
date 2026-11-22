@@ -633,6 +633,68 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   ok(c8.length === 1 && c8[0].kind === 'add_target' && c8[0].target === 'extra_step' && c8[0].block === 'R/new_target.R' && c8[0].fn && c8[0].fn.name === 'make_extra_step' && c8[0].format === null && c8[0].pattern === null && !('item' in c8[0]) && !('base' in c8[0]), `add target: ${JSON.stringify(c8)}`);
   await rebuilt();
 
+  // ---- review round: variants, numeric maps, open dialog follows the files, hold path ----
+  // removing one unfolded variant removes its template: every variant goes, and the toast says so
+  click(d.querySelector('#nodes .mpill[data-map="map:area_data+area_hist"]'));
+  await wait(30);
+  click(node('area_hist_urban')); key('Delete');
+  await wait(1);
+  ok(!node('area_hist_urban') && !node('area_hist_rural') && node('area_data_urban'), 'remove a variant: all variants of its template go at once');
+  await wait(60);
+  const c9 = lastChanges();
+  ok(c9.length === 1 && JSON.stringify(c9[0]) === JSON.stringify({ kind: 'remove_target', item: 'target:area_hist', base: tBase('area_hist_urban'), target: 'area_hist' }), `remove variant -> template: ${JSON.stringify(c9)}`);
+  ok(/Removed area_hist \(2 variants\)\./.test(toastText()) && /area_histogram\(\) is now unused\./.test(toastText()), `variant removal toast: "${toastText()}"`);
+  await rebuilt();
+
+  // a variant argument that cannot be mapped back to the template (numeric map values): refused, nothing sent
+  await rebuilt(m => { m.targets.find(t => t.name === 'model_fit_base').args[1].value = '1'; m.targets.find(t => t.name === 'model_fit_full').args[1].value = '2'; });
+  const nEd = edits().length;
+  await openModalOf('model_fit_full');
+  const plugSel = d.getElementById('m-plug');
+  plugSel.value = 'raw_file'; plugSel.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await apply();
+  ok(edits().length === nEd && /model_fit_full is a variant of model_fit; change its arguments in RStudio\./.test(toastText()), `numeric map value: refused locally ("${toastText()}")`);
+  key('Escape');
+  await wait(20);
+  await rebuilt(m => { m.targets.find(t => t.name === 'model_fit_base').args[1].value = '"base"'; m.targets.find(t => t.name === 'model_fit_full').args[1].value = '"full"'; });
+
+  // the open dialog follows a file change: untouched fields update, typed text stays, a notice, Apply sends only the edit
+  await openModalOf('clean_data');
+  setField('#m-desc', 'Typed while RStudio saved');
+  await rebuilt(m => { const f = m.functions.find(x => x.name === 'clean_survey'); f.title = 'Clean responses (edited in RStudio)'; f.base = 'base-after-rstudio'; });
+  ok(d.getElementById('m-title')?.value === 'Clean responses (edited in RStudio)' && d.getElementById('m-desc')?.value === 'Typed while RStudio saved', `dialog: new title taken, typed description kept ("${d.getElementById('m-title')?.value}")`);
+  ok(/function:clean_survey changed in your files since you opened this dialog\. Your edits are kept; untouched fields were updated\./.test(d.getElementById('m-notice')?.textContent || ''), `dialog notice: "${d.getElementById('m-notice')?.textContent}"`);
+  await apply();
+  const c10 = lastChanges();
+  ok(c10.length === 1 && JSON.stringify(c10[0]) === JSON.stringify({ kind: 'set_doc', item: 'function:clean_survey', base: 'base-after-rstudio', fn: 'clean_survey', field: 'description', value: 'Typed while RStudio saved' }), `Apply after the merge: only set_doc(description), new base ${JSON.stringify(c10)}`);
+  await rebuilt(m => { m.functions.find(x => x.name === 'clean_survey').description = 'Typed while RStudio saved'; });
+
+  // two params: the user touches one, the files change the other -> Apply sends only the touched one
+  await openModalOf('region_summary');
+  setField('#modal textarea[data-p="data"]', 'Clean responses, one row per respondent.');
+  await rebuilt(m => { const f = m.functions.find(x => x.name === 'summarise_region'); f.params.region = 'A region code (edited in RStudio).'; f.base = 'sr-base-2'; });
+  ok(d.querySelector('#modal textarea[data-p="region"]')?.value === 'A region code (edited in RStudio).' && d.querySelector('#modal textarea[data-p="data"]')?.value === 'Clean responses, one row per respondent.', 'dialog: the untouched param takes the file value, the touched one keeps the text');
+  await apply();
+  const c11 = lastChanges();
+  ok(c11.length === 1 && c11[0].kind === 'set_doc' && c11[0].field === 'param' && c11[0].param === 'data' && c11[0].base === 'sr-base-2', `two params: only the touched one is sent ${JSON.stringify(c11)}`);
+  await rebuilt();
+
+  // held model (building): its model_error still shows
+  await openModalOf('hist_clean');
+  setField('#m-title', 'Histogram of clean scores');
+  await apply();
+  W.model.model_error = 'Error in tar_target(): broken on purpose';
+  await nudge();
+  ok(nodeTitle('hist_clean') === 'Histogram of clean scores' && /broken on purpose/.test(banners()), 'held model (building): optimistic edit kept, its model_error shown');
+  W.model.model_error = null;
+  await rebuilt();
+
+  // a factory target's description is never written: read-only on the live page
+  await openModalOf('report');
+  ok(d.getElementById('m-desc')?.readOnly, 'live: factory description read-only');
+  key('Escape');
+  await wait(20);
+
   await wait(100);
   ok(wErrors.length === 0, `write page: no console errors${wErrors.length ? ':\n' + wErrors.join('\n') : ''}`);
   console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
