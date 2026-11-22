@@ -525,7 +525,7 @@ test_that("add_target refuses a file that exists under another spelling", {
   path <- small_project()
   skip_if_not(file.exists(file.path(path, "R", "A.R")), "case-sensitive file system")
   before <- read_utf8(file.path(path, "R/a.R"))
-  expect_error(apply_changes(path, list(add_req("R/A.R"))), "R/a.R exists under another spelling",
+  expect_error(apply_changes(path, list(add_req("R/A.R"))), "R/A.R exists under another spelling (R/a.R); use that name.",
     fixed = TRUE, class = "pipeworks_bad_change")
   expect_equal(read_utf8(file.path(path, "R/a.R")), before)
 })
@@ -614,4 +614,47 @@ test_that("rename_function counts uses it leaves alone", {
   dir <- local_project(list("R/a.R" = c("fn <- function(x) x", "g <- function(x) fn(x)")))
   out <- chg_rename_function(wb_files(dir), list(fn = "fn", to = "fn2"))
   expect_equal(attr(out, "notes"), "Renamed 1 call(s) of fn(); calls by string or in reports are not followed.")
+})
+
+test_that("a case variant of a directory is refused, not written over the file", {
+  path <- local_project(list("_targets.R" = c("library(targets)", "tar_source()", "list(pipeline_a, pipeline_b)"),
+    "R/a.R" = c("f <- function() 1", "", "pipeline_a <- list(", "  tar_target(x, f())", ")"),
+    "R/sub/b.R" = c("h <- function() 2", "", "pipeline_b <- list(", "  tar_target(z, h())", ")")))
+  skip_if_not(file.exists(file.path(path, "R", "SUB", "b.R")), "case-sensitive file system")
+  before <- read_utf8(file.path(path, "R/sub/b.R")); tbefore <- read_utf8(file.path(path, "_targets.R"))
+  for (b in c("R/Sub/b.R", "R/SUB/b.R", "R/sub/B.R")) {
+    expect_error(apply_changes(path, list(add_req(b))), sprintf("%s exists under another spelling (R/sub/b.R)", b),
+      fixed = TRUE, class = "pipeworks_bad_change")
+  }
+  expect_equal(read_utf8(file.path(path, "R/sub/b.R")), before)
+  expect_equal(read_utf8(file.path(path, "_targets.R")), tbefore)
+  # the general guard in apply_changes, for a path a change produced
+  files <- wb_files(path)
+  expect_error(wb_check_spelling(files, "R/Sub/b.R"), "exists under another spelling", class = "pipeworks_bad_change")
+})
+
+test_that("undo never writes over an identical copy when lines were added below it", {
+  dir <- local_project(list("R/a.R" = c("#' T", "#' @param x Old.", "#' @export", "",
+    "#' T", "#' @param x Input.", "#' @export")))
+  file <- file.path(dir, "R/a.R")
+  b <- read_utf8(file)
+  undo <- list("R/a.R" = list(before = b, after = replace(b, 2, "#' @param x Input."), existed = TRUE, start = 2L))
+  l <- c(replace(b, 2, "#' @param x By hand."), paste("# tail", 1:5)); writeLines(l, file)
+  expect_error(undo_changes(dir, undo), class = "pipeworks_stale")
+  expect_equal(read_utf8(file), l)
+})
+
+test_that("undo refuses when the file changed above and below the edit", {
+  dir <- local_project(list("R/a.R" = c("a <- 1", "b <- 2", "c <- 3")))
+  file <- file.path(dir, "R/a.R")
+  undo <- list("R/a.R" = list(before = c("a <- 1", "b <- 0", "c <- 3"), after = c("a <- 1", "b <- 2", "c <- 3"),
+    existed = TRUE, start = 2L))
+  # lines changed both above and below: the place cannot be told from the
+  # common prefix and suffix, so it is refused rather than guessed
+  for (now in list(c("# new", "a <- 1", "b <- 2", "c <- 3", "# more"), c("a <- 9", "b <- 2", "c <- 9"))) {
+    writeLines(now, file)
+    expect_error(undo_changes(dir, undo), "R/a.R changed around that edit; undo it in RStudio.", fixed = TRUE,
+      class = "pipeworks_stale")
+    expect_equal(read_utf8(file), now)
+  }
 })

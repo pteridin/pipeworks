@@ -650,13 +650,22 @@ wb_block_path <- function(files, block) {
   invisible(block)
 }
 
-# A path the page names that exists on disk only under another spelling.
+# R/**.R and _targets.R as they are spelled on disk (case-exact listing).
+wb_disk_rels <- function(root) {
+  on_disk <- list.files(file.path(root, "R"), pattern = "\\.[Rr]$", recursive = TRUE)
+  c(if (length(on_disk)) file.path("R", on_disk), intersect("_targets.R", list.files(root, all.files = TRUE)))
+}
+
+# A path that exists on disk but is not spelled that way there (a
+# case-insensitive file system would write over the other file).
 wb_check_spelling <- function(files, rel) {
-  full <- file.path(attr(files, "root"), rel)
-  if (!file.exists(full) || basename(rel) %in% list.files(dirname(full), all.files = TRUE)) return(invisible(rel))
-  rels <- wb_rels(files)
+  root <- attr(files, "root")
+  if (!file.exists(file.path(root, rel))) return(invisible(rel))
+  rels <- wb_disk_rels(root)
+  if (rel %in% rels) return(invisible(rel))
   other <- rels[tolower(rels) == tolower(rel)]
-  wb_bad(sprintf("%s exists under another spelling; use that name.", if (length(other)) other[1] else rel))
+  wb_bad(sprintf("%s exists under another spelling (%s); use that name.", rel,
+    if (length(other)) other[1] else "a different spelling"))
 }
 
 chg_add_target <- function(files, ch) {
@@ -871,17 +880,29 @@ wb_common_suffix <- function(a, b, max = min(length(a), length(b))) {
 # Where `region` (lines `start`.. of `after`, the text the edit wrote) sits
 # in `cur`, the file now. Edits made since then lie between the common
 # prefix and suffix of `after` and `cur`: above the region they shift it by
-# the net line change, below they leave it in place; overlapping, the region
-# may sit anywhere in between. A hit must be inside that window, with as many
-# context lines (kept text around the region) as it takes to be unique, at
-# least one when there is any. `NULL` when it is gone or still ambiguous.
+# the net line change, below they leave it in place. A hit must be at that
+# position, with as many context lines (kept text around the region) as it takes to be unique, at
+# least one when there is any. Where the edits overlap the region only one
+# position is tried: `start` when they begin inside it, `start` + the net line
+# change when they end inside it; changed on both sides gives `around`.
+# `NULL` when it is gone or still ambiguous.
 wb_undo_place <- function(cur, after, start, prefix, region, suffix) {
   delta <- length(cur) - length(after)
   cp <- wb_common_prefix(cur, after)
   cs <- wb_common_suffix(cur, after, min(length(cur), length(after)) - cp)
   end <- start + length(region) - 1L
-  ok <- if (end <= cp) start else if (start > length(after) - cs) start + delta else
-    seq(start + min(0L, delta), start + max(0L, delta))
+  last_changed <- length(after) - cs
+  ok <- if (end <= cp) {
+    start
+  } else if (start > last_changed) {
+    start + delta
+  } else if (cp + 1L >= start) {
+    start # the changes begin inside the region: nothing moved above it
+  } else if (last_changed <= end) {
+    start + delta # the changes end inside the region: all of the line change is above or in it
+  } else {
+    return(list(around = TRUE)) # changed above and below: its place cannot be told
+  }
   for (k in min(1L, max(length(prefix), length(suffix))):max(length(prefix), length(suffix))) {
     pre <- utils::tail(prefix, min(k, length(prefix)))
     suf <- utils::head(suffix, min(k, length(suffix)))
@@ -916,6 +937,9 @@ undo_changes <- function(path, undo) {
     region <- a[seq_len(length(a) - pre - suf) + pre]
     at <- wb_undo_place(txt$lines, a, start, a[seq_len(pre)], region, a[seq_len(suf) + length(a) - suf])
     if (is.null(at)) stale(rel)
+    if (isTRUE(at$around)) {
+      wb_stale(NA_character_, rel, sprintf("%s changed around that edit; undo it in RStudio.", rel))
+    }
     restore <- b[seq_len(length(b) - pre - suf) + pre]
     lines <- txt$lines
     txt$lines <- c(lines[seq_len(at$from - 1L)], restore, lines[seq_len(length(lines) - at$from - at$n + 1L) + at$from + at$n - 1L])
