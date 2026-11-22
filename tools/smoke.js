@@ -689,6 +689,36 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   W.model.model_error = null;
   await rebuilt();
 
+  // a variant's target argument: a different variant of the same map is refused, nothing sent
+  const drag = (fromId, toId) => {
+    d.elementFromPoint = () => node(toId);
+    d.querySelector(`#nodes .port-out[data-port="${fromId}"]`).dispatchEvent(new Ev('pointerdown', pev));
+    canvasEl.dispatchEvent(new Ev('pointerup', pev));
+  };
+  const edgeShown = (a, b) => !!d.querySelector(`#edges [data-edge="${a}>${b}"]`);
+  const nEd2 = edits().length;
+  drag('area_data_urban', 'area_hist_rural');
+  await wait(60);
+  ok(edits().length === nEd2 && /area_hist_rural is a variant of area_hist; change its arguments in RStudio\./.test(toastText()) && !edgeShown('area_data_urban', 'area_hist_rural') && edgeShown('area_data_urban', 'area_hist_urban'), `other variant into a variant: refused locally ("${toastText()}")`);
+  // a plain target into one variant: one set_call for the template, the edge on every variant
+  drag('regions', 'area_hist_urban');
+  await wait(1);
+  ok(edgeShown('regions', 'area_hist_urban') && edgeShown('regions', 'area_hist_rural'), 'plain target into a variant: the edge shown on every variant');
+  await wait(60);
+  const c12 = lastChanges(), calls12 = c12.filter(c => c.kind === 'set_call');
+  ok(calls12.length === 1 && calls12[0].target === 'area_hist' && JSON.stringify(calls12[0].args) === JSON.stringify([{ name: 'data', value: 'area_data', named: false }, { name: 'area', value: 'area', named: false }, { name: 'regions', value: 'regions', named: false }]), `plain target into a variant: one set_call for the template ${JSON.stringify(calls12)}`);
+  ok(/Plugged regions into area_hist \(2 variants\)\./.test(toastText()), `plug toast: "${toastText()}"`);
+  await rebuilt();
+
+  // a param the user edited but the files deleted is kept, with the notice
+  await openModalOf('region_summary');
+  setField('#modal textarea[data-p="region"]', 'My region text');
+  await rebuilt(m => { const f = m.functions.find(x => x.name === 'summarise_region'); delete f.params.region; f.base = 'sr-base-3'; });
+  ok(d.querySelector('#modal textarea[data-p="region"]')?.value === 'My region text' && /function:summarise_region changed in your files/.test(d.getElementById('m-notice')?.textContent || ''), 'dialog: an edited param deleted in the files is kept, notice shown');
+  key('Escape');
+  await wait(20);
+  await rebuilt(m => { m.functions.find(x => x.name === 'summarise_region').params.region = 'A single region code.'; });
+
   // a factory target's description is never written: read-only on the live page
   await openModalOf('report');
   ok(d.getElementById('m-desc')?.readOnly, 'live: factory description read-only');

@@ -846,11 +846,12 @@ function connect(from, to) {
   if (writing()) return;
   const why = canConnect(from, to); if (why) return toast(why);
   const before = snap(); if (!IS_LIVE) push(before);
-  const t = S.targets[to], f = fnOf(to), list = [];
+  const t = S.targets[to], f = fnOf(to), list = [], oldArgs = clone(t.args);
   const added = plugInto(t, f, from, list);
   S.edges.push({ from, to });
+  const n = IS_LIVE ? mirrorVariants(to, oldArgs) : 1;
   invalidate(to); renderAll();
-  if (IS_LIVE) return liveCommit(before, `Plug ${nm(from)} into ${nm(to)}`);
+  if (IS_LIVE) return liveCommit(before, n > 1 ? `Plug ${nm(from)} into ${t.map.template} (${n} variants)` : `Plug ${nm(from)} into ${nm(to)}`, null, n > 1 ? `Plugged ${nm(from)} into ${t.map.template} (${n} variants).` : '', to);
   toast(added ? `Added argument ${nm(from)} to ${f.name}()${usedBy(f.name).length > 1 ? ` with default NULL, because ${usedBy(f.name).length - 1} other target(s) share it` : ''}.` : `${nm(to)} now passes ${nm(from)} to ${f.name}().`, true);
 }
 function unplug(from, to) {
@@ -863,9 +864,35 @@ function unplug(from, to) {
   if (why) { Object.assign(S, JSON.parse(before), { sel: S.sel }); return toast(why); }
   if (!IS_LIVE) push(before);
   S.edges = S.edges.filter(e => !(e.from === from && e.to === to));
+  const n = IS_LIVE ? mirrorVariants(to, JSON.parse(before).targets[to].args) : 1;
   invalidate(to); S.sel = null; renderAll();
-  if (IS_LIVE) return liveCommit(before, `Unplug ${nm(from)} from ${nm(to)}`);
+  if (IS_LIVE) return liveCommit(before, n > 1 ? `Unplug ${nm(from)} from ${t.map.template} (${n} variants)` : `Unplug ${nm(from)} from ${nm(to)}`, null, n > 1 ? `Unplugged ${nm(from)} from ${t.map.template} (${n} variants).` : '', to);
   toast(`Unplugged ${nm(from)} from ${nm(to)}.`, true);
+}
+/* Live: a variant's call is written as its template's, so a target argument plugged into or unplugged
+   from one variant changes every variant of that template. Mirror the change (args and edges) onto the
+   siblings: a plain target as itself, a variant of the same map as the sibling's own variant.
+   `oldArgs`: the variant's args before the action. Returns the number of variants changed. */
+function mirrorVariants(id, oldArgs) {
+  const t = S.targets[id], mp = t && t.map; if (!mp) return 1;
+  const keyOf = rid => { const r = S.targets[rid]; return r && r.map && r.map.id === mp.id && r.map.variant === mp.variant ? '@' + r.map.template : rid; };
+  const keys = args => new Map(args.filter(a => a.kind === 'target').map(a => [keyOf(a.refs[0]), a]));
+  const now = keys(t.args), was = keys(oldArgs);
+  const added = [...now].filter(([k]) => !was.has(k)), removed = [...was.keys()].filter(k => !now.has(k));
+  if (!added.length && !removed.length) return 1;
+  const sibs = ids().filter(i => i !== id && S.targets[i].map && S.targets[i].map.id === mp.id && S.targets[i].map.template === mp.template);
+  sibs.forEach(i => {
+    const st = S.targets[i];
+    const resolve = k => (k[0] === '@' ? ids().find(j => { const o = S.targets[j].map; return o && o.id === mp.id && o.template === k.slice(1) && o.variant === st.map.variant; }) : k);
+    removed.forEach(k => { const rid = resolve(k); if (!rid) return; st.args = st.args.filter(a => !(a.kind === 'target' && a.refs[0] === rid)); S.edges = S.edges.filter(e => !(e.from === rid && e.to === i)); });
+    added.forEach(([k, a0]) => {
+      const rid = resolve(k); if (!rid || !S.targets[rid] || st.args.some(a => a.kind === 'target' && a.refs[0] === rid)) return;
+      st.args.push({ ...clone(a0), value: nm(rid), refs: [rid] });
+      if (!S.edges.some(e => e.from === rid && e.to === i)) S.edges.push({ from: rid, to: i });
+    });
+    invalidate(i);
+  });
+  return sibs.length + 1;
 }
 function uniqueName(base, taken) { if (!taken.has(base)) return base; let i = 2; while (taken.has(`${base}_${i}`)) i++; return `${base}_${i}`; }
 function addTarget(x, y, from) {
@@ -917,7 +944,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 
 /* The change list (see the vocabulary in the write-back design) that turns snapshot `a` into `b`.
    item/base come from `a`; map variants are written as their template; set_* use the old names. */
-function diffChanges(a, b) {
+function diffChanges(a, b, focus) {
   const tSets = [], fSets = [], renF = [], renT = [], rems = [], adds = [], seen = new Set();
   const once = k => !seen.has(k) && seen.add(k);
   const key = t => (t.map ? t.map.template : t.name);
@@ -931,7 +958,11 @@ function diffChanges(a, b) {
     if (x.kind === 'target') {
       const r = a.targets[x.refs[0]] || b.targets[x.refs[0]];
       value = oldName(x.refs[0]);
-      if (t.map && r && r.map && r.map.id === t.map.id && r.map.variant === t.map.variant) value = r.map.template;
+      // a variant may refer to its own variant of the same map (the template's symbol) or to a plain target
+      if (t.map && r && r.map) {
+        if (r.map.id !== t.map.id || r.map.variant !== t.map.variant) throw new Error(`${t.name} is a variant of ${t.map.template}; change its arguments in RStudio.`);
+        value = r.map.template;
+      }
     } else if (t.map) {
       const m = MAPS[t.map.id];
       if (m && m.param && x.value === JSON.stringify(String(t.map.variant))) value = m.param;
@@ -945,7 +976,9 @@ function diffChanges(a, b) {
     return { name: x.name, value, named: !!x.named };
   });
   const orNull = v => (v == null || !String(v).trim() ? null : v);
-  Object.keys(a.targets).forEach(id => {
+  // the acted-on target first, so a refusal names it (its siblings follow it)
+  const order = Object.keys(a.targets); if (focus && a.targets[focus]) order.unshift(...order.splice(order.indexOf(focus), 1));
+  order.forEach(id => {
     const ta = a.targets[id], tb = b.targets[id], k = key(ta);
     const own = { item: `target:${k}`, base: ta.base, target: k };
     if (!tb) { if (once(`rm:${k}`)) rems.push({ kind: 'remove_target', ...own }); return; }
@@ -1014,10 +1047,10 @@ function refuseLocal(msg, restore, dlg) {
   renderAll(); reopenDialog(dlg); toast(msg);
 }
 /* `before`: snapshot before the action. `dlg`: the dialog state when the action came from a dialog. */
-function liveCommit(before, label, dlg, said = '') {
+function liveCommit(before, label, dlg, said = '', focus = dlg && dlg.id) {
   const a = JSON.parse(before);
   let changes;
-  try { changes = diffChanges(a, { targets: S.targets, fns: S.fns, edges: S.edges }); }
+  try { changes = diffChanges(a, { targets: S.targets, fns: S.fns, edges: S.edges }, focus); }
   catch (e) { return refuseLocal(e.message, dlg ? dlg.pre : before, dlg); }
   if (!changes.length) return toast('Nothing to write: the files already say this.');
   // an item written a moment ago has no fresh base until the rebuilt model arrives
@@ -1573,7 +1606,7 @@ function saveModal() {
     before = JSON.stringify(p);
   }
   if (!IS_LIVE) push(before);
-  const cur = S.targets[M.id];
+  const cur = S.targets[M.id], oldArgs = clone(cur.args);
   if (M.locked) { ['name', 'description', 'format', 'pattern', 'args'].forEach(k => { t[k] = JSON.parse(JSON.stringify(cur[k])); }); M.deps = deps(M.id); }
   t.name = t.name.trim();
   let codeChanged = false;
@@ -1588,6 +1621,7 @@ function saveModal() {
   }
   const { x, y, _h } = cur; Object.assign(cur, t, { x, y, _h });
   S.edges = S.edges.filter(e => e.to !== M.id).concat(M.deps.map(from => ({ from, to: M.id })));
+  if (IS_LIVE) mirrorVariants(M.id, oldArgs);
   if (codeChanged || cur.pattern !== t.pattern) invalidate(M.id);
   const wasNew = M.isNew;
   // what a refusal needs to open the dialog again with the user's text
@@ -1957,7 +1991,8 @@ function mergeDialog() {
       const s0 = by(start, x.name), u = by(user, x.name);
       return !u || !s0 || eq(u, s0) ? clone(x) : u;
     });
-    arr(user).forEach(u => { if (!by(start, u.name) && !by(out, u.name)) out.push(u); });
+    // added by the user, or edited by the user but deleted in the files (kept; the notice says so)
+    arr(user).forEach(u => { const s0 = by(start, u.name); if ((!s0 || !eq(u, s0)) && !by(out, u.name)) out.push(u); });
     return out;
   };
   const ti = `target:${nt.map ? nt.map.template : nt.name}`, t = clone(nt);
