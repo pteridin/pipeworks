@@ -30,8 +30,10 @@ review round (2026-11-21). Items fixed in later waves are left out.
 
 ## Next features
 
-- Write-back from Build mode: roxygen, targets and wiring into the files
-  (also the foundation for `sc_write()`).
+- Write-back follow-ups: renaming a target that report sources read
+  (`tar_read()`/`tar_load()`) is refused today; editing expression
+  commands; scope-aware renames (shadowed local functions or formals);
+  undo matching that requires context, not only the identical text.
 - Scaffold API (after the decisions above).
 
 ## Performance

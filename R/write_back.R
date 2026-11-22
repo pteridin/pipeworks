@@ -307,7 +307,7 @@ chg_set_target_arg <- function(files, ch) {
     i <- which(args$name == ch$arg)
     if (!length(i)) return(list(remove = integer(), replace = list(), add = if (!is.null(text)) paste0(ch$arg, " = ", text)))
     if (is.null(text)) return(list(remove = i, replace = list(), add = character()))
-    list(remove = integer(), replace = setNames(list(paste0(ch$arg, " = ", text)), i[1]), add = character())
+    list(remove = integer(), replace = stats::setNames(list(paste0(ch$arg, " = ", text)), i[1]), add = character())
   })
 }
 

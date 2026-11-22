@@ -18,6 +18,14 @@ Changes since the QA MVP.
 * `qa_walk()` goes through open items in the console (interactive sessions only).
 * Verdicts are refused on a detached HEAD, and the editor keeps a banner with a
   Retry button for verdict files that are saved but not committed.
+* Build mode writes to your files. Every action in the live editor (roxygen
+  title, description, parameters and return, function signatures and bodies,
+  target arguments and calls, new, renamed and removed functions and targets)
+  is spliced into the right `R/` file or `_targets.R` and the view rebuilds.
+  Writes are all or none, refused when the code changed since the page
+  loaded, keep everything outside the touched chunk byte for byte, and are
+  never committed. Undo reverts the last write. The static page and the demo
+  still keep edits in memory.
 * `pipeworks()` returns the address invisibly (it returned the model before).
 
 ## Changed

@@ -49,7 +49,7 @@ wb_callee <- function(p, id) {
 wb_call_args <- function(p, id) {
   k <- wb_children(p, id)
   open <- which(k$token == "'('")[1]
-  close <- tail(which(k$token == "')'"), 1L)
+  close <- utils::tail(which(k$token == "')'"), 1L)
   inner <- k[seq_len(max(close - open - 1L, 0L)) + open, , drop = FALSE]
   group <- cumsum(inner$token == "','")
   args <- list()
