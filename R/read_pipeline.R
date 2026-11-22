@@ -85,6 +85,25 @@ assemble_model <- function(path, info) {
   target_edges <- edges[edges$from %in% target_names & edges$to %in% target_names, , drop = FALSE]
   fn_edges <- edges[edges$from %in% names(fns) & edges$to %in% target_names, , drop = FALSE]
 
+  lines_of <- local({
+    cache <- list()
+    function(file) {
+      if (is.null(cache[[file]])) cache[[file]] <<- read_utf8(file)
+      cache[[file]]
+    }
+  })
+  # `base`: hash of the raw lines of the item, checked before a write-back
+  for (name in names(fns)) {
+    f <- fns[[name]]
+    fns[[name]]["base"] <- list(item_base(lines_of(f$file), f$doc_line, f$end_line))
+  }
+  base_of <- function(t_name, map) {
+    if (is.null(items)) return(NULL)
+    it <- items[items$id == target_item(t_name, map), , drop = FALSE]
+    if (!nrow(it)) return(NULL)
+    item_base(lines_of(it$file[1]), it$line1[1], it$line2[1])
+  }
+
   targets <- lapply(seq_len(nrow(manifest)), function(i) {
     row <- manifest[i, ]
     call <- target_call(row$command, fns, target_names)
@@ -105,6 +124,7 @@ assemble_model <- function(path, info) {
       branches = if (!is.na(row$pattern) && row$name %in% names(branches)) branches[[row$name]] else NULL,
       block = placed$block[[i]],
       map = placed$map[[i]],
+      base = base_of(row$name, placed$map[[i]]),
       qa = NULL,
       qa_file = NULL
     )
