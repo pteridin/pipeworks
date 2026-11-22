@@ -1053,6 +1053,9 @@ function liveCommit(before, label, dlg, said = '', focus = dlg && dlg.id) {
   try { changes = diffChanges(a, { targets: S.targets, fns: S.fns, edges: S.edges }, focus); }
   catch (e) { return refuseLocal(e.message, dlg ? dlg.pre : before, dlg); }
   if (!changes.length) return toast('Nothing to write: the files already say this.');
+  // R could not locate the item in the files when it read them (base null): it would refuse anyway
+  const lost = changes.find(c => c.item && c.base == null);
+  if (lost) return refuseLocal(`${lost.item} could not be found in the files when they were last read (does its file parse?); change it in RStudio.`, dlg ? dlg.pre : before, dlg);
   // an item written a moment ago has no fresh base until the rebuilt model arrives
   if (changes.some(c => WRITTEN.has('*') || (c.item && WRITTEN.has(c.item)))) return refuseLocal(STILL, dlg ? dlg.pre : before, dlg);
   const tkeys = new Set(changes.filter(c => c.target).map(c => c.target)), fkeys = new Set(changes.filter(c => c.fn && c.kind !== 'add_target').map(c => c.fn));
@@ -1590,10 +1593,17 @@ function nameError(v, kind, selfName) {
   if (kind === 'function' && v !== selfName && S.fns[v]) return `${v}() already exists in ${S.fns[v].file}.`;
   return '';
 }
+/* A new target's file on the live page: a plain R/<name>.R below R/ (R checks it again). */
+function fileError(v) {
+  const seg = v.split('/');
+  if (/\\/.test(v) || seg.length < 2 || seg[0] !== 'R' || seg.some(s => !s || s === '.' || s === '..') || !/^.+\.[Rr]$/.test(seg[seg.length - 1])) return `The file must be R/<name>.R inside the project, not ${v || 'empty'}.`;
+  return '';
+}
 function saveModal() {
   if (REVIEW() || writing()) return;
   const t = M.t, f = M.f, orig = fnOf(M.id);
-  const err = nameError(t.name.trim(), 'target') || (f ? nameError(f.name.trim(), 'function', orig.name) : '');
+  const err = nameError(t.name.trim(), 'target') || (f ? nameError(f.name.trim(), 'function', orig.name) : '') ||
+    (IS_LIVE && f && f.isNew ? fileError(f.file.trim()) : '');
   const box = $('#m-err'); box.hidden = !err; box.textContent = err;
   if (err) return;
   const pre = snap();

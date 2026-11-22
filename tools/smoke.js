@@ -633,6 +633,32 @@ const colour = el => (el.className.match(/mc-\d/) || [''])[0];
   ok(c8.length === 1 && c8[0].kind === 'add_target' && c8[0].target === 'extra_step' && c8[0].block === 'R/new_target.R' && c8[0].fn && c8[0].fn.name === 'make_extra_step' && c8[0].format === null && c8[0].pattern === null && !('item' in c8[0]) && !('base' in c8[0]), `add target: ${JSON.stringify(c8)}`);
   await rebuilt();
 
+  // a new target's file must stay a plain R/<name>.R: refused in the dialog, nothing sent
+  const nEdF = edits().length;
+  d.getElementById('btn-add').click();
+  await wait(40);
+  setField('#m-name', 'outside_step');
+  for (const bad of ['R/../outside.R', '_targets.R', 'R/./a.R', 'R\\a.R', 'R//a.R']) {
+    setField('#m-file', bad);
+    await apply();
+    const errBox = d.getElementById('m-err');
+    ok(edits().length === nEdF && errBox && !errBox.hidden && /R\/<name>\.R/.test(errBox.textContent) && !d.getElementById('overlay').hidden, `new target file "${bad}": refused in the dialog ("${errBox?.textContent}")`);
+    if (!errBox) break;
+  }
+  key('Escape');
+  await wait(20);
+
+  // an item without a base (R could not locate it in the files): refused locally, nothing sent
+  await rebuilt(m => { m.functions.find(x => x.name === 'clean_survey').base = null; });
+  const nEdB = edits().length, titleB = nodeTitle('clean_data');
+  await openModalOf('clean_data');
+  setField('#m-title', 'No base here');
+  await apply();
+  ok(edits().length === nEdB && /function:clean_survey/.test(toastText()) && /RStudio/.test(toastText()) && nodeTitle('clean_data') === titleB, `base null: refused locally ("${toastText()}")`);
+  key('Escape');
+  await wait(20);
+  await rebuilt(m => { m.functions.find(x => x.name === 'clean_survey').base = fnBase('clean_survey'); });
+
   // ---- review round: variants, numeric maps, open dialog follows the files, hold path ----
   // removing one unfolded variant removes its template: every variant goes, and the toast says so
   click(d.querySelector('#nodes .mpill[data-map="map:area_data+area_hist"]'));
