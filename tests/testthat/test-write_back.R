@@ -36,11 +36,11 @@ test_that("set_formals removes, changes defaults and keeps untouched formatting"
   out <- chg_set_formals(files, list(fn = "f", formals = list(list(name = "a"), list(name = "b", default = "2"), list(name = "c"))))
   expect_equal(wb_lines(out, "R/a.R")[1:3], c("f <- function(a,", "                b = 2,", "                c) {"))
   out <- chg_set_formals(files, list(fn = "f", formals = list(list(name = "b", default = "1"), list(name = "c"))))
-  expect_equal(wb_lines(out, "R/a.R")[1:2], c("f <- function(b = 1,", "                c) {"))
+  expect_equal(wb_lines(out, "R/a.R")[1:3], c("f <- function(", "                b = 1,", "                c) {"))
   out <- chg_set_formals(files, list(fn = "f", formals = list(list(name = "a"))))
-  expect_equal(wb_lines(out, "R/a.R")[1], "f <- function(a) {")
+  expect_equal(wb_lines(out, "R/a.R")[1:2], c("f <- function(a", "                ) {"))
   out <- chg_set_formals(files, list(fn = "f", formals = list(list(name = "a"), list(name = "b", default = "1"), list(name = "d"))))
-  expect_equal(wb_lines(out, "R/a.R")[1:3], c("f <- function(a,", "                b = 1,", "                d) {"))
+  expect_equal(wb_lines(out, "R/a.R")[1:3], c("f <- function(a,", "                b = 1,", "                d"))
 })
 
 test_that("set_body re-indents and keeps the signature", {
@@ -101,4 +101,65 @@ test_that("a CRLF file keeps its line endings through a change", {
   txt <- wb_files_get(out, "R/x.R")
   expect_equal(txt$eol, "\r\n"); expect_true(txt$final_nl)
   expect_equal(txt$lines[1], "f <- function(a, b) {")
+})
+
+wb_formals_fixture <- function(env = parent.frame()) {
+  dir <- local_project(list("R/a.R" = c(
+    "f <- function(a, # first", "               # between", "               b, # second",
+    "               c # third", ") {", "  a", "}")), env)
+  wb_files(dir)
+}
+wb_comments <- function(l) sort(regmatches(l, regexpr("#.*$", l)))
+
+test_that("removing a formal never deletes other comments", {
+  files <- wb_formals_fixture()
+  keep <- function(drop, comments) {
+    want <- Filter(function(n) n != drop, c("a", "b", "c"))
+    out <- chg_set_formals(files, list(fn = "f", formals = lapply(want, function(n) list(name = n))))
+    l <- wb_lines(out, "R/a.R")
+    expect_equal(wb_comments(l), sort(comments))
+    expect_false(any(grepl(paste0("^\\s*", drop, "\\b[ ,]"), l)))
+    l
+  }
+  keep("a", c("# first", "# between", "# second", "# third"))
+  keep("b", c("# first", "# between", "# third"))
+  l <- keep("c", c("# first", "# between", "# second"))
+  expect_true(any(grepl("^\\s*b # second$", l)))
+  # the result still parses
+  expect_no_error(parse(text = l))
+})
+
+test_that("removing call arguments keeps comments and inline layout", {
+  dir <- local_project(list("R/a.R" = c(
+    "x <- list(", "  tar_target(", "    t,", "    f(a, # one", "      # own line", "      b, # two",
+    "      c), # three", "    format = \"qs\"", "  )", ")")))
+  files <- wb_files(dir)
+  out <- chg_set_call(files, list(target = "t", args = list(
+    list(name = "", value = "a", named = FALSE), list(name = "", value = "b", named = FALSE))))
+  l <- wb_lines(out, "R/a.R")
+  expect_equal(wb_comments(l), c("# one", "# own line", "# three", "# two"))
+  expect_no_error(parse(text = l))
+  out <- chg_set_call(files, list(target = "t", args = list(list(name = "", value = "b", named = FALSE),
+    list(name = "", value = "c", named = FALSE))))
+  l <- wb_lines(out, "R/a.R")
+  expect_equal(wb_comments(l), c("# one", "# own line", "# three", "# two"))
+  expect_false(any(grepl("^\\s*a\\b", l)))
+  out <- chg_set_target_arg(files, list(target = "t", arg = "format", value = NULL))
+  expect_equal(wb_comments(wb_lines(out, "R/a.R")), c("# one", "# own line", "# three", "# two"))
+  dir2 <- local_project(list("R/a.R" = "f(a, b, c)\nx <- list(tar_target(t, g(p, q)))"))
+  out <- chg_set_call(wb_files(dir2), list(target = "t", args = list(list(name = "", value = "p", named = FALSE))))
+  expect_equal(wb_lines(out, "R/a.R")[2], "x <- list(tar_target(t, g(p)))")
+})
+
+test_that("set_body keeps the inner lines of a multi-line string verbatim", {
+  dir <- local_project(list("R/a.R" = c("f <- function(x) {", "  x", "}")))
+  out <- chg_set_body(wb_files(dir), list(fn = "f", body = "s <- \"a\n  b\nc\"\nx"))
+  expect_equal(wb_lines(out, "R/a.R"), c("f <- function(x) {", "  s <- \"a", "  b", "c\"", "  x", "}"))
+  expect_error(chg_set_body(wb_files(dir), list(fn = "f", body = "x <- (")), "does not parse", class = "pipeworks_bad_change")
+})
+
+test_that("a file that does not parse is reported instead of 'not found'", {
+  dir <- local_project(list("R/a.R" = "f <- function(x) {", "R/b.R" = "g <- 1"))
+  expect_error(chg_set_doc(wb_files(dir), list(fn = "g", field = "title", value = "x")), "Cannot parse|g\\(\\)", class = "pipeworks_bad_change")
+  expect_error(chg_set_doc(wb_files(dir), list(fn = "zzz", field = "title", value = "x")), "Cannot parse", class = "pipeworks_bad_change")
 })

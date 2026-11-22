@@ -25,12 +25,17 @@ wb_rels <- function(files) {
 }
 
 wb_find <- function(files, locate) {
+  err <- NULL
   for (rel in wb_rels(files)) {
-    p <- tryCatch(wb_parse(wb_files_get(files, rel)$lines, rel), error = function(e) NULL)
+    p <- tryCatch(wb_parse(wb_files_get(files, rel)$lines, rel), error = function(e) {
+      if (is.null(err)) err <<- conditionMessage(e)
+      NULL
+    })
     if (is.null(p)) next
     hit <- locate(p)
     if (!is.null(hit)) return(list(rel = rel, p = p, hit = hit))
   }
+  if (!is.null(err)) wb_bad(err)
   NULL
 }
 
@@ -75,19 +80,70 @@ quote_r <- function(x) {
 
 # --- argument lists (call arguments and formals share one shape) -----------
 
-# Cut arguments `idx` of `args` (with their separating commas).
-wb_cut <- function(args, idx) {
+# Display column of character `chars` of `line` (tabs advance to multiples of 8).
+wb_col_of <- function(line, chars) wb_end_col(substr(line, 1L, chars)) - 1L
+
+# Cut arguments `idx` of `args`, each with one separating comma. Other
+# comments are never touched: an argument alone on its lines is cut line by
+# line (with its own trailing comment), otherwise only its span goes. Cutting
+# the tail of the list takes the comma after the last kept argument instead
+# (that comma's trailing comment stays on its line).
+wb_cut <- function(p, args, idx) {
   if (!length(idx)) return(wb_edits())
+  lines <- p$lines
   n <- nrow(args)
   idx <- sort(idx)
-  runs <- split(idx, cumsum(c(1L, diff(idx) != 1L)))
-  edits <- lapply(runs, function(r) {
-    a <- r[1]
-    b <- r[length(r)]
-    if (b < n) wb_edit(args$line1[a], args$col1[a], args$line1[b + 1L], args$col1[b + 1L] - 1L, "")
-    else if (a > 1L) wb_edit(args$line2[a - 1L], args$col2[a - 1L] + 1L, args$line2[b], args$col2[b], "")
-    else wb_edit(args$line1[a], args$col1[a], args$line2[b], args$col2[b], "")
-  })
+  comma_after <- function(i) {
+    line <- lines[args$line2[i]]
+    c0 <- pd_char(line, args$col2[i])
+    m <- regexpr("^\\s*,", substring(line, c0 + 1L))
+    if (m < 0) NA_integer_ else c0 + attr(m, "match.length")
+  }
+  tail_run <- integer()
+  i <- n
+  while (i >= 1L && i %in% idx) {
+    tail_run <- c(i, tail_run)
+    i <- i - 1L
+  }
+  edits <- list()
+  handled <- integer()
+  k <- if (length(tail_run)) tail_run[1] - 1L else 0L
+  if (k >= 1L) {
+    cm <- comma_after(k)
+    if (!is.na(cm)) {
+      cl <- args$line2[k]
+      ccol <- wb_col_of(lines[cl], cm)
+      if (args$line1[tail_run[1]] == cl && args$line2[n] == cl) {
+        edits[[1]] <- wb_edit(cl, ccol, cl, args$col2[n], "")
+        handled <- tail_run
+      } else {
+        edits[[1]] <- wb_edit(cl, ccol, cl, ccol, "")
+      }
+    }
+  }
+  for (i in setdiff(idx, handled)) {
+    l1 <- args$line1[i]
+    l2 <- args$line2[i]
+    first <- lines[l1]
+    last <- lines[l2]
+    prefix <- substr(first, 1L, pd_char(first, args$col1[i]) - 1L)
+    e <- pd_char(last, args$col2[i])
+    cm <- if (i < n) comma_after(i) else NA_integer_
+    after <- substring(last, (if (is.na(cm)) e else cm) + 1L)
+    own <- !nzchar(trimws(prefix)) && (!nzchar(trimws(after)) || startsWith(trimws(after), "#")) &&
+      (i == n || !is.na(cm))
+    if (own && l2 < length(lines)) {
+      edits[[length(edits) + 1L]] <- wb_edit(l1, 1L, l2 + 1L, 0L, "")
+      next
+    }
+    end_chars <- if (is.na(cm)) e else cm
+    # eat the blanks after the comma unless a comment or the line end follows
+    if (!is.na(cm)) {
+      ws <- regexpr("^\\s+", after)
+      if (ws > 0 && !startsWith(trimws(after), "#")) end_chars <- end_chars + attr(ws, "match.length")
+    }
+    edits[[length(edits) + 1L]] <- wb_edit(l1, args$col1[i], l2, wb_col_of(last, end_chars), "")
+  }
   do.call(wb_edits, unname(edits))
 }
 
@@ -146,7 +202,7 @@ wb_edit_args <- function(files, rel, locate, plan) {
   ca <- locate(p)
   pl <- plan(ca$args)
   indent <- wb_arg_layout(p, ca$args)
-  e1 <- wb_cut(ca$args, pl$remove)
+  e1 <- wb_cut(p, ca$args, pl$remove)
   rp <- lapply(names(pl$replace), function(i) {
     a <- ca$args[as.integer(i), ]
     wb_edit(a$line1, a$col1, a$line2, a$col2, pl$replace[[i]])
@@ -215,7 +271,16 @@ chg_set_body <- function(files, ch) {
   b <- r$p$pd[r$p$pd$id == f$body_id, ]
   indent <- sub("^(\\s*).*$", "\\1", r$p$lines[f$line1])
   body <- strsplit(gsub("\r", "", ch$body, fixed = TRUE), "\n", fixed = TRUE)[[1]]
-  inner <- if (length(body)) paste0("\n", paste(indent_lines(body, 2L) |> (\(x) ifelse(nzchar(x), paste0(indent, x), x))(), collapse = "\n")) else ""
+  pd <- tryCatch(utils::getParseData(parse(text = body, keep.source = TRUE, encoding = "UTF-8")),
+    error = function(e) wb_bad(sprintf("The body of %s() does not parse: %s", ch$fn, conditionMessage(e))))
+  # lines that continue a multi-line string keep their text
+  inside <- integer()
+  if (!is.null(pd)) {
+    str <- pd[pd$token == "STR_CONST" & pd$line2 > pd$line1, , drop = FALSE]
+    for (j in seq_len(nrow(str))) inside <- c(inside, (str$line1[j] + 1L):str$line2[j])
+  }
+  shifted <- ifelse(seq_along(body) %in% inside | !nzchar(body), body, paste0(indent, "  ", body))
+  inner <- if (length(body)) paste0("\n", paste(shifted, collapse = "\n")) else ""
   text <- paste0("{", inner, "\n", indent, "}")
   wb_splice(files, r$rel, r$p, wb_edit(b$line1, b$col1, b$line2, b$col2, text))
 }
