@@ -238,9 +238,11 @@ signature lines. Without them the report says it is valid without signature.
   `changed`. The latest verdict wins, so the item needs a new verdict.
 - A deleted item leaves no item behind. Its removal shows up as a change of
   the rest item around it (the list or `_targets.R`).
-- The editor is connected to R, but edits of the pipeline (roxygen, targets)
-  stay in memory. Writing them back to your files is still to come. Only
-  verdicts are written.
-- The static page from `pipeworks_html()` has no connection to R. It opens in
-  Build mode when nothing is open. In Review mode it shows the `qa_review()`
+- On the live page every Build action (roxygen, signatures, bodies, targets,
+  wiring, renames) is written to your files as a chunk-level change, all or
+  none. A write is refused if the item changed since the page loaded. Undo
+  reverts the last write. Nothing is committed; verdicts are committed as
+  before.
+- The static page from `pipeworks_html()` has no connection to R and keeps
+  edits in memory only. It opens in Build mode when nothing is open. In Review mode it shows the `qa_review()`
   call to copy instead of buttons.
